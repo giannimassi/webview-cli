@@ -4,5 +4,6 @@
 *.dSYM/
 .DS_Store
 .claude/
+.superpowers/
 *.tar.gz
 media/.DS_Store
