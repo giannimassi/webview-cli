@@ -245,17 +245,30 @@ Embedded renderer (existing JS, ~250 lines)
         └─ Serializer: collect comments + textarea value → structured object
 ```
 
-### Parser choice
+### Parser choice — `micromark`
 
-The spec is neutral on parser choice — the implementation plan will evaluate:
+Locked: **`micromark` core** (~15–20KB minified, CommonMark compliant).
 
-1. **`marked` minimal build** (~30-40KB) — battle-tested, well-documented, covers CommonMark
-2. **`micromark` core** (~15-20KB) — modern, smaller
-3. **Hand-rolled minimal parser** (~5-10KB, ~200 lines) — just enough for spec review content (no GFM, no edge-case HTML-in-md)
+Why over the alternatives:
+- **vs `marked` (~38KB):** `marked` is battle-tested but roughly 2× the size. Saving ~20KB matters here because the pitch *is* the size.
+- **vs hand-rolled (~5–10KB):** smaller is tempting, but markdown edge cases (nested emphasis, reference links, fenced code with backtick counts) are where hand-rolled parsers quietly break. `micromark` is actively maintained and is the parser behind `remark` / `unified`, so it handles them correctly out of the box. The maintenance saving compounds.
 
-Any of them needs a shim to annotate each block with its source line range, for comment anchoring. That's a small patch on top.
+We need a thin shim over `micromark`'s event stream to annotate each top-level block with its source line range — this is what comment anchoring hangs off. Cost: ~50–100 lines of JS.
 
-**Size budget: ~40KB for everything new.** Target total binary: under 250KB (up from 193KB). Preserves the tool's "tiny" brand.
+**Size budget: ~28KB for everything new.** Breakdown:
+
+| Component | Size |
+|-----------|------|
+| `micromark` core | ~18KB |
+| Source-line shim | ~2KB |
+| Comment UI logic (anchoring, composer, sidebar) | ~5KB |
+| Edit UI logic (tab switch, textarea handler) | ~2KB |
+| CSS (layout, composer, sidebar, tabs) | ~3KB |
+| **Total addition** | **~28–30KB** |
+
+**Target total binary: under 225KB** (up from 193KB — about a 15% increase). The README's "193KB" number gets updated; the "tiny vs Electron's 50MB+" story is unchanged.
+
+Deferred until there's actual demand: tables, GFM task lists, footnotes, definition lists. If/when added, they come in as a `micromark-extension-gfm` opt-in and we re-measure.
 
 ### Sanitization
 
@@ -293,10 +306,9 @@ Visual / manual:
 
 ## Open questions (to resolve in the plan phase)
 
-1. Parser choice (`marked` vs `micromark` vs hand-rolled) — decide based on actual size measurement and edge-case coverage needs
-2. Whether inline code (`` `foo` ``) and code blocks need any syntax-highlight affordance in v1, or stay plain monospace (currently: plain)
-3. Scroll-spy behavior: when you click a comment in the sidebar, should the rendered view scroll-and-highlight? (likely yes, nice-to-have)
-4. Behavior when `allowHtml=true` and user edits source to inject `<script>` — is the source view a trusted context? (likely: user edits are rendered in the preview with the same sanitization as the agent-provided markdown, unless `allowHtml` is on)
+1. Whether inline code (`` `foo` ``) and code blocks need any syntax-highlight affordance in v1, or stay plain monospace (currently: plain)
+2. Scroll-spy behavior: when you click a comment in the sidebar, should the rendered view scroll-and-highlight? (likely yes, nice-to-have)
+3. Behavior when `allowHtml=true` and user edits source to inject `<script>` — is the source view a trusted context? (likely: user edits are rendered in the preview with the same sanitization as the agent-provided markdown, unless `allowHtml` is on)
 
 ## Roadmap adjacencies (not in scope for this spec)
 
