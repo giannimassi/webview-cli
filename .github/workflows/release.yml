@@ -1,0 +1,65 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g. v0.1.1)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Resolve tag
+        id: tag
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            echo "tag=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build
+        run: make build
+
+      - name: Verify binary size under 250KB
+        run: |
+          SIZE=$(stat -f%z webview-cli)
+          echo "Binary size: $SIZE bytes"
+          [ "$SIZE" -le 262144 ] || { echo "Binary exceeds 250KB budget"; exit 1; }
+
+      - name: Smoke tests
+        run: make test
+
+      - name: Rename binary
+        run: cp webview-cli webview-cli-${{ steps.tag.outputs.tag }}-darwin-arm64
+
+      - name: Extract release notes
+        id: notes
+        run: |
+          TAG=${{ steps.tag.outputs.tag }}
+          VERSION=${TAG#v}
+          awk "/^## \[${VERSION}\]/,/^## \[/" CHANGELOG.md | sed '$d' > /tmp/notes.md
+          [ -s /tmp/notes.md ] || echo "Release ${TAG}" > /tmp/notes.md
+
+      - name: Create/update release with binary asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: ${{ steps.tag.outputs.tag }}
+          body_path: /tmp/notes.md
+          files: webview-cli-${{ steps.tag.outputs.tag }}-darwin-arm64
+          fail_on_unmatched_files: true
+          make_latest: "true"
