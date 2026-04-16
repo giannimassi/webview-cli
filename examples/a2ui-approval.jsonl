@@ -4,7 +4,7 @@
 {"surfaceUpdate": {"components": [{"id": "title", "component": {"Text": {"usageHint": "h2", "text": {"literalString": "Deploy Approval Required"}}}}]}}
 {"surfaceUpdate": {"components": [{"id": "subtitle", "component": {"Text": {"usageHint": "subtitle", "text": {"literalString": "An agent is requesting permission to deploy to production."}}}}]}}
 {"surfaceUpdate": {"components": [{"id": "divider", "component": {"Divider": {}}}]}}
-{"surfaceUpdate": {"components": [{"id": "description", "component": {"Text": {"usageHint": "body", "text": {"literalString": "Changes: Updated billing module with new rate-limit handler. 3 files changed, 47 insertions, 12 deletions. All tests passing."}}}}]}}
+{"surfaceUpdate": {"components": [{"id": "description", "component": {"Text": {"usageHint": "body", "text": {"literalString": "Changes: Updated API module with new rate-limit handler. 3 files changed, 47 insertions, 12 deletions. All tests passing."}}}}]}}
 {"surfaceUpdate": {"components": [{"id": "comment_input", "component": {"TextInput": {"label": {"literalString": "Comment (optional)"}, "placeholder": {"literalString": "Add context for the deploy log..."}, "fieldName": "comment", "multiline": true}}}]}}
 {"surfaceUpdate": {"components": [{"id": "button_row", "component": {"Row": {"alignment": "end", "children": {"explicitList": ["btn_reject", "btn_approve"]}}}}]}}
 {"surfaceUpdate": {"components": [{"id": "btn_reject", "component": {"Button": {"label": {"literalString": "Reject"}, "variant": "danger", "action": {"name": "reject"}}}}]}}

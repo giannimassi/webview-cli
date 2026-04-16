@@ -16,7 +16,7 @@ cat <<'EOF' | webview-cli --a2ui --title "Deploy Approval" --width 540 --height 
 {"surfaceUpdate":{"components":[{"id":"title","component":{"Text":{"usageHint":"h2","text":{"literalString":"Deploy to Production"}}}}]}}
 {"surfaceUpdate":{"components":[{"id":"subtitle","component":{"Text":{"usageHint":"subtitle","text":{"literalString":"Review changes before approving. Comment will be logged."}}}}]}}
 {"surfaceUpdate":{"components":[{"id":"divider","component":{"Divider":{}}}]}}
-{"surfaceUpdate":{"components":[{"id":"changes","component":{"Text":{"usageHint":"body","text":{"literalString":"Branch: feature/rate-limit-v2\n3 files changed, 47 insertions, 12 deletions\nAll CI checks passing\nLast commit: fix(api): handle rate-limit response event"}}}}]}}
+{"surfaceUpdate":{"components":[{"id":"changes","component":{"Text":{"usageHint":"body","text":{"literalString":"Branch: feature/rate-limit-v2\n3 files changed, 47 insertions, 12 deletions\nAll CI checks passing\nLast commit: fix(api): handle rate-limit responses"}}}}]}}
 {"surfaceUpdate":{"components":[{"id":"comment","component":{"TextInput":{"label":{"literalString":"Deploy note (optional)"},"placeholder":{"literalString":"e.g. urgent fix for customer X"},"fieldName":"note","multiline":true}}}]}}
 {"surfaceUpdate":{"components":[{"id":"buttons","component":{"Row":{"alignment":"end","children":{"explicitList":["btn_cancel","btn_deploy"]}}}}]}}
 {"surfaceUpdate":{"components":[{"id":"btn_cancel","component":{"Button":{"label":{"literalString":"Cancel"},"variant":"secondary","action":{"name":"cancel"}}}}]}}
