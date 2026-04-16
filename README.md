@@ -67,49 +67,111 @@ macOS-only is a choice, not a gap. A Linux port (GTK + WebKit2) and a Windows po
 
 ---
 
-## Built for the agent era
+## Use it
 
-The Opus 4.7 / Claude Code / MCP generation of tools is reasoning well enough that human-in-the-loop moments are common and consequential. Deploy approvals. Reviewer picks. Config forms. Diff acknowledgements. These deserve a real UI — not `[y/N]`.
+### With Claude Code
 
-`webview-cli` is how you give your agents that UI without bundling a browser.
+Install the bundled skill once:
 
-### With Claude Code (via the bundled skill)
+```bash
+ln -s "$(pwd)/skill" ~/.claude/skills/webview   # or use the installer flag
+```
 
-The installer drops a `/webview` skill into `~/.claude/skills/webview/`. Your agent just does:
+Then ask your agent anything that needs structured input from you. The skill handles the rest — generates A2UI, spawns the binary, parses the result, returns typed data. You never write JSONL by hand.
 
-> "I need approval before deploying. Show the user the change summary with an option to add a comment."
+**Example: deploy approval.** Agent says:
 
-Claude Code routes through the skill, generates A2UI JSONL, invokes `webview-cli --a2ui`, parses the returned JSON, and continues with the result. You never touch JSONL by hand.
+> "I'm about to deploy `payment-service` to production. Should I proceed?"
 
-### With OpenAI's Codex CLI or Gemini CLI
+The skill opens a native window with the change summary, a rollout radio (canary / full), a comment field, and Approve/Cancel. You click. The agent receives:
 
-Both are subprocess-capable. Any agent that can `spawn_subprocess` and read stdout can use webview-cli. Minimal wrapper in Python works for either:
+```json
+{"action": "approve", "data": {"rollout": "canary", "note": "Monitoring on standby"}}
+```
+
+and continues. No terminal input. No context loss.
+
+Other patterns the skill handles out of the box: single-select from agent-found options (PRs to review, branches to rebase), multi-field config forms, diff-and-acknowledge flows. Full skill docs: [`skill/SKILL.md`](skill/SKILL.md).
+
+### With OpenAI Codex CLI, Gemini CLI, or any subprocess-capable agent
+
+The binary is protocol-agnostic. Anything that can `spawn_subprocess` and read stdout works:
 
 ```python
 import subprocess, json
 
 result = subprocess.run(
     ["webview-cli", "--a2ui", "--timeout", "120"],
-    input=my_a2ui_jsonl,
+    input=your_a2ui_jsonl,
     capture_output=True, text=True
 )
-if result.returncode == 0:
-    response = json.loads(result.stdout)
-    # response['data']['action'] = button clicked
-    # response['data']['data'] = form field values
+# result.returncode: 0=submitted, 1=cancelled, 2=timeout, 3=error
+# json.loads(result.stdout) has {"status", "data": {"action", "data": {...}}}
 ```
 
-Protocol details in [`docs/protocol.md`](docs/protocol.md). A sharable Codex/Gemini tool definition is in [`examples/openai-codex-tool.md`](examples/openai-codex-tool.md).
+A complete wrapper plus a Codex tool definition you can paste into your agent config: [`examples/openai-codex-tool.md`](examples/openai-codex-tool.md).
 
-### With shell scripts or MCP servers
+### From a shell script or MCP server
 
-`webview-cli` is a Unix tool. Stdin JSON in, stdout JSON out. Pipes work. Blocking semantics work. Exit codes work. Use it anywhere a subprocess can run.
+It's a Unix tool. Stdin in, stdout out, exit codes report outcome. Pipes work. Blocking works. Put it wherever a subprocess can run:
+
+```bash
+# Approval gate in a CI/deploy script
+RESULT=$(cat my-form.jsonl | webview-cli --a2ui --title "Deploy?" --timeout 300)
+case $? in
+  0) ACTION=$(echo "$RESULT" | jq -r '.data.action'); [ "$ACTION" = "approve" ] && deploy ;;
+  1) echo "User cancelled." ;;
+  2) echo "Timed out — no response in 5 min." ;;
+esac
+```
 
 ---
 
-## Agent-native example
+## Common patterns
 
-Here's what an agent approval flow looks like end-to-end. Your agent pipes this on stdin to `webview-cli --a2ui`:
+<table>
+<tr>
+<td width="50%" valign="top">
+
+### Deploy approval
+
+Show the diff, context, a comment field. One click, agent continues with structured result plus the note going into the deploy log.
+
+[`examples/hero-deploy-approval.jsonl`](examples/hero-deploy-approval.jsonl)
+
+</td>
+<td width="50%" valign="top">
+
+### Pick from options
+
+Agent enumerates candidates (PRs, branches, files). User picks one with radio buttons. Agent proceeds with the choice.
+
+[`examples/`](examples/)
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+### Multi-field config
+
+Text inputs + selects + checkboxes in one native form. Better than six `read -p` prompts in a row.
+
+</td>
+<td width="50%" valign="top">
+
+### Custom HTML via `agent://`
+
+When the A2UI catalog isn't enough — charts, diffs, diagrams — pipe base64-encoded HTML on stdin. In-memory scheme handler serves it, no HTTP server.
+
+[`docs/protocol.md#agent-scheme`](docs/protocol.md)
+
+</td>
+</tr>
+</table>
+
+<details>
+<summary><b>What the raw A2UI JSONL looks like</b> (click to expand — the skill writes this for you)</summary>
 
 ```json
 {"surfaceUpdate":{"components":[{"id":"root","component":{"Column":{"children":{"explicitList":["card"]}}}}]}}
@@ -124,60 +186,9 @@ Here's what an agent approval flow looks like end-to-end. Your agent pipes this 
 {"beginRendering":{"root":"root"}}
 ```
 
-Native window opens. User picks "Canary (10%)", types a note, clicks Deploy. Stdout gets:
+That's the whole approval UI above. One line per component, flat adjacency list, LLM-friendly to generate. The skill produces this from a short natural-language description of the UI.
 
-```json
-{"status":"completed","data":{"action":"approve","data":{"rollout":"canary","note":"Monitoring dashboard on standby"},"context":{}}}
-```
-
-Exit code `0`. The agent continues. If the user cancelled → exit `1`. If timeout → exit `2`. If the URL/load errored → exit `3`.
-
-**The point: your agent doesn't write HTML/CSS. It emits a flat JSONL description of what UI it wants, and a native window appears.**
-
----
-
-## Use cases
-
-<table>
-<tr>
-<td width="50%" valign="top">
-
-### Deploy approval
-
-Show the diff, context, and a comment field. One click, agent continues with a structured result and the note goes into the deploy log.
-
-[`examples/hero-deploy-approval.jsonl`](examples/hero-deploy-approval.jsonl)
-
-</td>
-<td width="50%" valign="top">
-
-### Pick from options
-
-Agent enumerates candidates (PRs, branches, customers, files). User picks one with radio buttons. Agent proceeds.
-
-[`examples/multi-field-form.jsonl`](examples/)
-
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
-
-### Multi-field config
-
-Text inputs + selects + checkboxes in one native form. Better than 6 terminal prompts in a row.
-
-</td>
-<td width="50%" valign="top">
-
-### Custom HTML via `agent://`
-
-When A2UI's components aren't enough (charts, diffs, diagrams), pipe base64-encoded HTML on stdin. In-memory scheme handler serves it — no HTTP server.
-
-[`docs/protocol.md#agent-scheme`](docs/protocol.md)
-
-</td>
-</tr>
-</table>
+</details>
 
 ---
 
