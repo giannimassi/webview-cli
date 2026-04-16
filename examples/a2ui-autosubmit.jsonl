@@ -1,0 +1,3 @@
+{"surfaceUpdate": {"components": [{"id": "root", "component": {"Column": {"children": {"explicitList": ["auto_btn"]}}}}]}}
+{"surfaceUpdate": {"components": [{"id": "auto_btn", "component": {"Button": {"label": {"literalString": "Auto"}, "action": {"name": "auto_test"}}}}]}}
+{"beginRendering": {"root": "root"}}

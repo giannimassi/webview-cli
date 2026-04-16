@@ -1,0 +1,12 @@
+{"surfaceUpdate": {"components": [{"id": "root", "component": {"Column": {"children": {"explicitList": ["card"]}}}}]}}
+{"surfaceUpdate": {"components": [{"id": "card", "component": {"Card": {"child": "card_content"}}}]}}
+{"surfaceUpdate": {"components": [{"id": "card_content", "component": {"Column": {"children": {"explicitList": ["title", "subtitle", "divider", "description", "comment_input", "button_row"]}}}}]}}
+{"surfaceUpdate": {"components": [{"id": "title", "component": {"Text": {"usageHint": "h2", "text": {"literalString": "Deploy Approval Required"}}}}]}}
+{"surfaceUpdate": {"components": [{"id": "subtitle", "component": {"Text": {"usageHint": "subtitle", "text": {"literalString": "An agent is requesting permission to deploy to production."}}}}]}}
+{"surfaceUpdate": {"components": [{"id": "divider", "component": {"Divider": {}}}]}}
+{"surfaceUpdate": {"components": [{"id": "description", "component": {"Text": {"usageHint": "body", "text": {"literalString": "Changes: Updated billing module with new rate-limit handler. 3 files changed, 47 insertions, 12 deletions. All tests passing."}}}}]}}
+{"surfaceUpdate": {"components": [{"id": "comment_input", "component": {"TextInput": {"label": {"literalString": "Comment (optional)"}, "placeholder": {"literalString": "Add context for the deploy log..."}, "fieldName": "comment", "multiline": true}}}]}}
+{"surfaceUpdate": {"components": [{"id": "button_row", "component": {"Row": {"alignment": "end", "children": {"explicitList": ["btn_reject", "btn_approve"]}}}}]}}
+{"surfaceUpdate": {"components": [{"id": "btn_reject", "component": {"Button": {"label": {"literalString": "Reject"}, "variant": "danger", "action": {"name": "reject"}}}}]}}
+{"surfaceUpdate": {"components": [{"id": "btn_approve", "component": {"Button": {"label": {"literalString": "Approve"}, "variant": "success", "action": {"name": "approve"}}}}]}}
+{"beginRendering": {"root": "root"}}
