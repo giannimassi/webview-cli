@@ -45,7 +45,25 @@ Your AI agent needs to ask you a question that doesn't fit in a terminal prompt.
 | Runtime deps | **none** | Electron bundle | WebView2/WebKit2 + Rust | none |
 | Agent-first design | ✅ | ❌ | ❌ | ❌ |
 
-The native WebKit engine was already on your Mac. `webview-cli` is a 193KB adapter around it, optimized for the one thing you need: spawn, show, return JSON, die.
+## Why it's this small
+
+The numbers aren't optimization magic. They come from not bundling things that were already there.
+
+**WKWebView is already on your Mac.** The same engine Safari uses. We wrap it instead of shipping Chromium. That's ~50MB saved, no install-time download, and a decade of Apple's work on rendering correctness and memory management comes for free.
+
+**The Swift runtime ships with macOS 12+.** `libswiftCore`, `libswiftFoundation`, and friends live on the OS. We don't bundle them, version-pin them, or worry about ABI skew. Another ~12MB avoided, and none of the dylib-shipping pain that usually comes with cross-platform Swift.
+
+**A2UI is declarative, not imperative.** Your agent describes *what* UI it wants in a flat JSONL stream; the renderer decides how to lay it out, handle focus, and collect form data. ~250 lines of vanilla JavaScript covers the entire catalog — no React, no templating engine, no build step.
+
+Each subtraction compounded. Together they produced a binary that starts in ~180ms — faster than Electron finishes parsing its own bootstrap scripts.
+
+## Who it's for
+
+Agent developers on macOS.
+
+Claude Code was macOS-first. Cursor is macOS-first. Codex CLI, ChatGPT Desktop, Raycast, Warp, the wave of indie MCP servers being published on GitHub every week — the people building and using agent workflows skew heavily toward macOS. If you've opened Claude Code recently, you're probably holding a Mac.
+
+macOS-only is a choice, not a gap. A Linux port (GTK + WebKit2) and a Windows port (WebView2) are both technically straightforward, and the protocol is platform-independent — but shipping them at v0.1 would mean three build pipelines, three sets of edge cases, and slower iteration on the platform the audience actually uses. **Depth over breadth.** If you need this on another OS badly enough to maintain a port, open an issue — a clean implementation gets merged.
 
 ---
 
@@ -210,12 +228,6 @@ One Swift file, ~550 lines. `NSApplication` with `.accessory` policy (no Dock ic
 The renderer itself is ~250 lines of vanilla ES — no React, no framework, no build step. It's embedded as a string literal in the Swift binary. "What CSS framework is that?" is a frequent question. The answer is none — system fonts, `-apple-system`, CSS custom properties, ~60 lines of hand-written styles.
 
 See [`docs/architecture.md`](docs/architecture.md) for the tour.
-
----
-
-## Why macOS only
-
-The target audience (Claude Code, Codex CLI, Cursor, MCP server authors) skews heavily macOS. A Linux port with GTK/WebKit2 or a Windows port with WebView2 is possible — the protocol is platform-independent, the rendering backend isn't. PRs welcome but out of v1 scope. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 
