@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Agent Approval Form</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    background: #1a1a2e;
+    color: #e0e0e0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    padding: 2rem;
+  }
+  .card {
+    background: #16213e;
+    border-radius: 12px;
+    padding: 2rem;
+    max-width: 480px;
+    width: 100%;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+  }
+  h1 { font-size: 1.4rem; margin-bottom: 0.5rem; color: #fff; }
+  .subtitle { color: #8892b0; margin-bottom: 1.5rem; font-size: 0.9rem; }
+  label { display: block; margin-bottom: 0.3rem; font-size: 0.85rem; color: #a0a0c0; }
+  textarea, select {
+    width: 100%;
+    padding: 0.6rem;
+    border: 1px solid #2a2a4a;
+    border-radius: 6px;
+    background: #0f0f23;
+    color: #e0e0e0;
+    font-family: inherit;
+    font-size: 0.9rem;
+    margin-bottom: 1rem;
+    resize: vertical;
+  }
+  textarea:focus, select:focus { outline: none; border-color: #4a6cf7; }
+  .buttons { display: flex; gap: 0.75rem; margin-top: 0.5rem; }
+  button {
+    flex: 1;
+    padding: 0.7rem 1rem;
+    border: none;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+  button:hover { opacity: 0.85; }
+  .btn-approve { background: #4a6cf7; color: #fff; }
+  .btn-reject { background: #e74c3c; color: #fff; }
+  .btn-cancel { background: #2a2a4a; color: #a0a0c0; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Review Required</h1>
+  <p class="subtitle">An agent is requesting your approval to proceed.</p>
+
+  <label for="decision">Decision</label>
+  <select id="decision">
+    <option value="approve">Approve</option>
+    <option value="reject">Reject</option>
+    <option value="defer">Defer</option>
+  </select>
+
+  <label for="comment">Comment (optional)</label>
+  <textarea id="comment" rows="3" placeholder="Add context for the agent..."></textarea>
+
+  <div class="buttons">
+    <button class="btn-cancel" onclick="cancel()">Cancel</button>
+    <button class="btn-approve" onclick="submit()">Submit</button>
+  </div>
+</div>
+
+<script>
+  // Signal ready
+  if (window.webkit && window.webkit.messageHandlers.ready) {
+    window.webkit.messageHandlers.ready.postMessage({});
+  }
+
+  function submit() {
+    const data = {
+      decision: document.getElementById('decision').value,
+      comment: document.getElementById('comment').value
+    };
+    window.webkit.messageHandlers.complete.postMessage(data);
+  }
+
+  function cancel() {
+    window.close();
+  }
+</script>
+</body>
+</html>

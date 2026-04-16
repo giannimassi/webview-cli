@@ -1,0 +1,6 @@
+.build/
+webview-cli
+*.o
+*.dSYM/
+.DS_Store
+.claude/
