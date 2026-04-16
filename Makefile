@@ -14,4 +14,5 @@ clean:
 	rm -f $(BINARY)
 
 install: $(BINARY)
-	cp $(BINARY) /usr/local/bin/$(BINARY)
+	mkdir -p $(HOME)/bin
+	cp $(BINARY) $(HOME)/bin/$(BINARY)
