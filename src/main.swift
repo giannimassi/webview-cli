@@ -10,6 +10,9 @@ struct Config {
     var height: Int = 768
     var timeout: Int = 0
     var a2ui: Bool = false
+    var x: Int? = nil  // nil = center on screen
+    var y: Int? = nil
+    var screen: Int = 0  // NSScreen index; 0 = main
 }
 
 func parseArgs() -> Config? {
@@ -35,6 +38,15 @@ func parseArgs() -> Config? {
             config.timeout = Int(args[i]) ?? 0
         case "--a2ui":
             config.a2ui = true
+        case "--x":
+            i += 1; guard i < args.count else { return nil }
+            config.x = Int(args[i])
+        case "--y":
+            i += 1; guard i < args.count else { return nil }
+            config.y = Int(args[i])
+        case "--screen":
+            i += 1; guard i < args.count else { return nil }
+            config.screen = Int(args[i]) ?? 0
         case "--help", "-h":
             printUsage(); exit(0)
         default:
@@ -231,12 +243,21 @@ class AppCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NS
         webView = WKWebView(frame: .zero, configuration: webConfig)
         webView.navigationDelegate = self
 
-        let screenFrame = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1024, height: 768)
-        let windowRect = NSRect(
-            x: (screenFrame.width - CGFloat(config.width)) / 2 + screenFrame.origin.x,
-            y: (screenFrame.height - CGFloat(config.height)) / 2 + screenFrame.origin.y,
-            width: CGFloat(config.width), height: CGFloat(config.height)
-        )
+        // Select the target screen (0 = main, 1+ = secondary displays in NSScreen.screens order)
+        let screens = NSScreen.screens
+        for (i, s) in screens.enumerated() {
+            writeStderr("[screen \(i)] frame=\(Int(s.frame.origin.x)),\(Int(s.frame.origin.y)) \(Int(s.frame.width))x\(Int(s.frame.height))\(s == NSScreen.main ? " MAIN" : "")")
+        }
+        let targetScreen = (config.screen >= 0 && config.screen < screens.count) ? screens[config.screen] : (NSScreen.main ?? screens.first!)
+        let screenFrame = targetScreen.visibleFrame
+        writeStderr("[chosen screen \(config.screen)] visibleFrame=\(Int(screenFrame.origin.x)),\(Int(screenFrame.origin.y)) \(Int(screenFrame.width))x\(Int(screenFrame.height))")
+        // AppKit y=0 is BOTTOM of the global space. --y in CLI is from TOP of the target screen.
+        let winX: CGFloat = config.x.map { CGFloat($0) + screenFrame.origin.x }
+            ?? (screenFrame.width - CGFloat(config.width)) / 2 + screenFrame.origin.x
+        let winY: CGFloat = config.y.map { screenFrame.maxY - CGFloat($0) - CGFloat(config.height) }
+            ?? (screenFrame.height - CGFloat(config.height)) / 2 + screenFrame.origin.y
+        let windowRect = NSRect(x: winX, y: winY, width: CGFloat(config.width), height: CGFloat(config.height))
+        writeStderr("[window rect] x=\(Int(winX)) y=\(Int(winY)) w=\(config.width) h=\(config.height)")
 
         window = NSWindow(
             contentRect: windowRect,
@@ -260,6 +281,7 @@ class AppCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NS
 
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        writeStderr("[wid] \(window.windowNumber)")
 
         if config.timeout > 0 {
             timeoutTimer = Timer.scheduledTimer(withTimeInterval: TimeInterval(config.timeout), repeats: false) { [weak self] _ in
@@ -489,7 +511,7 @@ body {
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
   padding: 1.5rem;
 }
-.a2ui-text { line-height: 1.5; letter-spacing: -0.01em; }
+.a2ui-text { line-height: 1.5; letter-spacing: -0.01em; white-space: pre-wrap; }
 .a2ui-text.h1 { font-size: 1.75rem; font-weight: 700; letter-spacing: -0.02em; }
 .a2ui-text.h2 { font-size: 1.35rem; font-weight: 600; letter-spacing: -0.02em; }
 .a2ui-text.h3 { font-size: 1.05rem; font-weight: 600; letter-spacing: -0.01em; }

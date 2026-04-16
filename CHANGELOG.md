@@ -2,6 +2,17 @@
 
 All notable changes to webview-cli. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.2] — 2026-04-17
+
+### Added
+- `--x`, `--y`, `--screen` CLI flags for precise window positioning (top-left origin, point-based, 0-indexed screen)
+- Window ID is emitted to stderr as `[wid] <id>` — enables `screencapture -l <id>` for clean captures
+- CSS: multi-line text in `Text` components now preserves newlines (`white-space: pre-wrap`)
+- Five screenshots in `media/` showing real agent-UI patterns (deploy approval, PR picker, config form, destructive confirmation, triage)
+
+### Changed
+- Diagnostic stderr output on startup: screen list + chosen screen + final window rect. Useful for automation and debugging.
+
 ## [0.1.1] — 2026-04-17
 
 ### Added

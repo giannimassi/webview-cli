@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="media/hero.gif" alt="An AI agent spawns webview-cli, a native macOS window pops up in under 200ms, user submits a form, structured JSON goes back to the agent" width="640">
+  <img src="media/hero-deploy.png" alt="Deploy approval window — an agent asks for production deploy approval with a native macOS UI" width="560">
 </p>
 
 <p align="center">
@@ -133,38 +133,40 @@ esac
 <tr>
 <td width="50%" valign="top">
 
-### Deploy approval
-
-Show the diff, context, a comment field. One click, agent continues with structured result plus the note going into the deploy log.
-
-[`examples/hero-deploy-approval.jsonl`](examples/hero-deploy-approval.jsonl)
-
-</td>
-<td width="50%" valign="top">
-
 ### Pick from options
 
 Agent enumerates candidates (PRs, branches, files). User picks one with radio buttons. Agent proceeds with the choice.
 
-[`examples/`](examples/)
+<img src="media/select-pr.png" alt="PR picker with 5 options" width="100%">
 
 </td>
-</tr>
-<tr>
 <td width="50%" valign="top">
 
 ### Multi-field config
 
 Text inputs + selects + checkboxes in one native form. Better than six `read -p` prompts in a row.
 
+<img src="media/form-config.png" alt="Multi-field config form" width="100%">
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+### Destructive confirmation
+
+Irreversible action with context, safety checkbox, and a danger-variant button. Prevents the "yes 40 times in a row" mistake.
+
+<img src="media/confirm-destructive.png" alt="Destructive confirmation with safety check" width="100%">
+
 </td>
 <td width="50%" valign="top">
 
-### Custom HTML via `agent://`
+### Triage / classification
 
-When the A2UI catalog isn't enough — charts, diffs, diagrams — pipe base64-encoded HTML on stdin. In-memory scheme handler serves it, no HTTP server.
+Priority dropdown, complexity radio, and notes in one native form. Agent gets structured metadata back to act on.
 
-[`docs/protocol.md#agent-scheme`](docs/protocol.md)
+<img src="media/triage.png" alt="Triage form" width="100%">
 
 </td>
 </tr>
