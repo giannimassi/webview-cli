@@ -2,7 +2,19 @@
 
 All notable changes to webview-cli. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.1.0] — 2026-04-21
+## [0.1.1] — 2026-04-17
+
+### Added
+- `RadioGroup` component for A2UI rendering (mutually-exclusive option selection)
+- `Image` component for A2UI rendering (remote or agent:// URLs, size control)
+- One-command `install.sh` that handles Homebrew tap + formula install + Claude Code skill install + smoke test
+- Codex / Gemini / MCP integration examples (`examples/openai-codex-tool.md`)
+- README rewritten around agent-native usage (skill-first, not raw JSONL)
+
+### Fixed
+- Form-data collection now correctly handles radio button groups (only checked option contributes)
+
+## [0.1.0] — 2026-04-17
 
 Public launch. First stable release.
 
@@ -31,8 +43,7 @@ Public launch. First stable release.
 ### Known limitations
 
 - macOS-only — no Linux or Windows port
-- A2UI subset only — no `Image`, `List`, `RadioGroup` components yet
 - No data-binding expressions (`dataModelUpdate` not fully supported)
 - No `--css` custom-theme flag (opinionated defaults only)
-- No persistent cookie storage across invocations (`WKWebsiteDataStore.default()` is ephemeral)
+- No persistent cookie storage across invocations
 - No code signing or notarization — Gatekeeper will warn on first open unless installed via brew

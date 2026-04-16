@@ -13,6 +13,8 @@
 | `TextInput` | `label.literalString`, `placeholder.literalString`, `fieldName`, `multiline` (bool), `value.literalString` | `multiline=true` renders a `<textarea>` |
 | `Select` | `label.literalString`, `fieldName`, `options` (array of `{value, label}` or strings) | Native `<select>` with custom chevron |
 | `Checkbox` | `label.literalString`, `fieldName`, `checked` (bool) | Apple-blue accent |
+| `RadioGroup` | `label.literalString`, `fieldName`, `options` (array), `value` (initial selection) | Mutually exclusive; first option selected by default |
+| `Image` | `url` (literal or dataRef), `alt`, `width`, `height` | Supports remote URLs and `agent://` scheme |
 | `Button` | `label.literalString`, `variant` (`primary` \| `secondary` \| `danger` \| `success`), `action.name`, `action.context` | Clicking fires the `complete` handler with collected form data |
 | `Divider` | — | Horizontal rule |
 
@@ -73,12 +75,12 @@ Response on Approve click:
 
 ## Why a subset
 
-The A2UI spec has ~30 components in the standard catalog. Shipping all of them would bloat the renderer beyond the 200-line budget without improving the four target patterns. If your use case needs `Image`, `List`, `RadioGroup`, or other components, open an issue — they're on the roadmap for v1.1.
+The A2UI spec has ~30 components in the standard catalog. Shipping all of them would bloat the renderer beyond the 250-line budget without improving the agent-UI patterns this tool targets. If your use case needs `List` or other components not shipped yet, open an issue — they're on the roadmap.
 
 For richer UIs, use `--url` mode and serve custom HTML via `agent://`.
 
 ## Roadmap
 
-- v0.2: `RadioGroup`, `Image`, better `dataModelUpdate` support
+- v0.2: `List` component, better `dataModelUpdate` support, full JSON Pointer data binding
 - v1.0: Full A2UI v0.8 standard catalog, declared spec compliance
 - v1.1: A2UI v0.9 (`createSurface`, client-side functions)

@@ -526,10 +526,11 @@ body {
 .a2ui-checkbox { display: flex; align-items: center; gap: 0.5rem; padding: 0.3rem 0; cursor: pointer; }
 .a2ui-checkbox input { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
 .a2ui-checkbox span { font-size: 0.925rem; }
+.a2ui-image { max-width: 100%; height: auto; border-radius: 8px; display: block; }
 """
 
 let a2uiRendererJS = """
-// Minimal A2UI v0.8 renderer — supports: Text, TextInput, Button, Column, Row, Card, Select, Divider
+// Minimal A2UI v0.8 renderer — supports: Text, TextInput, Button, Column, Row, Card, Select, Checkbox, RadioGroup, Image, Divider
 // Renders adjacency list → DOM, wires userAction → postMessage bridge
 
 (function() {
@@ -560,6 +561,7 @@ let a2uiRendererJS = """
     document.querySelectorAll('[data-a2ui-field]').forEach(el => {
       const name = el.dataset.a2uiField;
       if (el.type === 'checkbox') data[name] = el.checked;
+      else if (el.type === 'radio') { if (el.checked) data[name] = el.value; }
       else data[name] = el.value;
     });
     return data;
@@ -583,6 +585,8 @@ let a2uiRendererJS = """
       case 'Button': return renderButton(props);
       case 'Select': return renderSelect(props);
       case 'Checkbox': return renderCheckbox(props);
+      case 'RadioGroup': return renderRadioGroup(props);
+      case 'Image': return renderImage(props);
       case 'Divider': return renderDivider();
       default:
         const fallback = document.createElement('div');
@@ -708,6 +712,46 @@ let a2uiRendererJS = """
     label.appendChild(input);
     label.appendChild(text);
     return label;
+  }
+
+  function renderRadioGroup(props) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'a2ui-column';
+    if (props.label) {
+      const lbl = document.createElement('label');
+      lbl.className = 'a2ui-label';
+      lbl.textContent = resolveValue(props.label);
+      wrapper.appendChild(lbl);
+    }
+    const fieldName = props.fieldName || 'radio_' + Math.random().toString(36).slice(2,6);
+    const groupName = 'g_' + Math.random().toString(36).slice(2,8);
+    (props.options || []).forEach((opt, idx) => {
+      const row = document.createElement('label');
+      row.className = 'a2ui-checkbox';
+      const input = document.createElement('input');
+      input.type = 'radio';
+      input.name = groupName;
+      input.value = typeof opt === 'string' ? opt : (opt.value || '');
+      input.dataset.a2uiField = fieldName;
+      if (props.value && resolveValue(props.value) === input.value) input.checked = true;
+      if (!props.value && idx === 0) input.checked = true;
+      const text = document.createElement('span');
+      text.textContent = typeof opt === 'string' ? opt : (opt.label || opt.value || '');
+      row.appendChild(input);
+      row.appendChild(text);
+      wrapper.appendChild(row);
+    });
+    return wrapper;
+  }
+
+  function renderImage(props) {
+    const img = document.createElement('img');
+    img.className = 'a2ui-image';
+    img.src = resolveValue(props.url);
+    img.alt = resolveValue(props.alt) || '';
+    if (props.width) img.style.width = props.width + 'px';
+    if (props.height) img.style.height = props.height + 'px';
+    return img;
   }
 
   function processMessages(messages) {

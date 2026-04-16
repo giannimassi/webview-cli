@@ -1,116 +1,182 @@
+<h1 align="center">webview-cli</h1>
 <p align="center">
-  <h1 align="center">webview-cli</h1>
-  <p align="center"><strong>Native macOS UIs for CLI AI agents.</strong><br>
-  193KB single binary · ~180ms cold start · no Electron · no npm</p>
+  <strong>Native macOS UIs for CLI AI agents.</strong><br>
+  <sub>193KB · ~180ms cold start · no Electron · no npm · no runtime</sub>
 </p>
 
 <p align="center">
-  <!-- HERO GIF GOES HERE — replace media/hero.gif with the 30s demo before launch -->
-  <img src="media/hero.gif" alt="webview-cli demo: agent asks for deploy approval, user responds in native window, JSON returned on stdout" width="640">
+  <img src="media/hero.gif" alt="An AI agent spawns webview-cli, a native macOS window pops up in under 200ms, user submits a form, structured JSON goes back to the agent" width="640">
 </p>
 
 <p align="center">
   <a href="https://github.com/giannimassi/webview-cli/actions"><img src="https://github.com/giannimassi/webview-cli/workflows/CI/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License"></a>
-  <a href="#install"><img src="https://img.shields.io/badge/macOS-12%2B-black" alt="macOS 12+"></a>
-  <a href="#install"><img src="https://img.shields.io/badge/binary-193KB-green" alt="193KB"></a>
+  <img src="https://img.shields.io/badge/macOS-12%2B-black" alt="macOS 12+">
+  <img src="https://img.shields.io/badge/binary-193KB-green" alt="193KB">
+  <img src="https://img.shields.io/badge/cold%20start-~180ms-orange" alt="~180ms">
 </p>
 
 ```bash
-brew tap giannimassi/tap
-brew install webview-cli
+curl -sSL https://raw.githubusercontent.com/giannimassi/webview-cli/main/install.sh | bash
 ```
+
+*One command. Installs the binary via Homebrew, installs the Claude Code skill if `~/.claude` exists, runs a smoke test.*
 
 ---
 
-## What it is
+## 193KB vs Electron's 50MB+
 
-Your agent spawns `webview-cli` like a bash command. Pipes in a description of the UI it wants. A real macOS window opens in under 200ms. The user interacts — types, clicks, picks. Structured JSON comes back on stdout. The process exits. The agent continues.
+Your AI agent needs to ask you a question that doesn't fit in a terminal prompt. The choices today:
 
-No Electron runtime, no npm tree, no persistent daemon, no browser context. Just a Unix tool that speaks JSON and renders native UIs.
+- **Electron app:** 50MB+ runtime, 500–800ms cold start, requires a persistent app bundle. Way too heavy for a subprocess the agent spawns 20 times per session.
+- **Tauri / Wails:** 8–15MB, 300–500ms. Still too heavy, still designed as app frameworks.
+- **`osascript` AppleScript dialog:** built-in, ~300ms, gives you 2 buttons and a text field. Useless for anything structured.
+- **Terminal `[y/N]`:** the default. Fine for yes/no, terrible for "review this diff" or "pick one of these 12 PRs."
 
-## Quick start
+**webview-cli:** 193KB single binary, ~180ms cold start, a real native macOS window, structured JSON back to the agent, process dies clean.
 
-```bash
-cat <<'EOF' | webview-cli --a2ui --title "Deploy" --width 540 --height 480 --timeout 120
-{"surfaceUpdate":{"components":[{"id":"root","component":{"Column":{"children":{"explicitList":["card"]}}}}]}}
-{"surfaceUpdate":{"components":[{"id":"card","component":{"Card":{"child":"content"}}}]}}
-{"surfaceUpdate":{"components":[{"id":"content","component":{"Column":{"children":{"explicitList":["title","note","buttons"]}}}}]}}
-{"surfaceUpdate":{"components":[{"id":"title","component":{"Text":{"usageHint":"h2","text":{"literalString":"Deploy to production?"}}}}]}}
-{"surfaceUpdate":{"components":[{"id":"note","component":{"TextInput":{"label":{"literalString":"Note"},"fieldName":"note","multiline":true}}}]}}
-{"surfaceUpdate":{"components":[{"id":"buttons","component":{"Row":{"alignment":"end","children":{"explicitList":["btn_c","btn_d"]}}}}]}}
-{"surfaceUpdate":{"components":[{"id":"btn_c","component":{"Button":{"label":{"literalString":"Cancel"},"variant":"secondary","action":{"name":"cancel"}}}}]}}
-{"surfaceUpdate":{"components":[{"id":"btn_d","component":{"Button":{"label":{"literalString":"Deploy"},"variant":"success","action":{"name":"approve"}}}}]}}
-{"beginRendering":{"root":"root"}}
-EOF
+| | webview-cli | Electron | Tauri / Wails | osascript |
+|---|---|---|---|---|
+| Binary size | **193KB** | 50MB+ | 8–15MB | built-in |
+| Cold start | **~180ms** | 500–800ms | 300–500ms | ~300ms |
+| Rich HTML/CSS UI | ✅ | ✅ | ✅ | ❌ |
+| Structured JSON out | ✅ | app-specific | app-specific | ❌ (string) |
+| Spawnable subprocess | ✅ | ❌ (app lifecycle) | ❌ (app lifecycle) | ✅ |
+| Runtime deps | **none** | Electron bundle | WebView2/WebKit2 + Rust | none |
+| Agent-first design | ✅ | ❌ | ❌ | ❌ |
+
+The native WebKit engine was already on your Mac. `webview-cli` is a 193KB adapter around it, optimized for the one thing you need: spawn, show, return JSON, die.
+
+---
+
+## Built for the agent era
+
+The Opus 4.7 / Claude Code / MCP generation of tools is reasoning well enough that human-in-the-loop moments are common and consequential. Deploy approvals. Reviewer picks. Config forms. Diff acknowledgements. These deserve a real UI — not `[y/N]`.
+
+`webview-cli` is how you give your agents that UI without bundling a browser.
+
+### With Claude Code (via the bundled skill)
+
+The installer drops a `/webview` skill into `~/.claude/skills/webview/`. Your agent just does:
+
+> "I need approval before deploying. Show the user the change summary with an option to add a comment."
+
+Claude Code routes through the skill, generates A2UI JSONL, invokes `webview-cli --a2ui`, parses the returned JSON, and continues with the result. You never touch JSONL by hand.
+
+### With OpenAI's Codex CLI or Gemini CLI
+
+Both are subprocess-capable. Any agent that can `spawn_subprocess` and read stdout can use webview-cli. Minimal wrapper in Python works for either:
+
+```python
+import subprocess, json
+
+result = subprocess.run(
+    ["webview-cli", "--a2ui", "--timeout", "120"],
+    input=my_a2ui_jsonl,
+    capture_output=True, text=True
+)
+if result.returncode == 0:
+    response = json.loads(result.stdout)
+    # response['data']['action'] = button clicked
+    # response['data']['data'] = form field values
 ```
 
-Click Deploy and stdout gets:
+Protocol details in [`docs/protocol.md`](docs/protocol.md). A sharable Codex/Gemini tool definition is in [`examples/openai-codex-tool.md`](examples/openai-codex-tool.md).
+
+### With shell scripts or MCP servers
+
+`webview-cli` is a Unix tool. Stdin JSON in, stdout JSON out. Pipes work. Blocking semantics work. Exit codes work. Use it anywhere a subprocess can run.
+
+---
+
+## Agent-native example
+
+Here's what an agent approval flow looks like end-to-end. Your agent pipes this on stdin to `webview-cli --a2ui`:
 
 ```json
-{"status":"completed","data":{"action":"approve","data":{"note":"LGTM"},"context":{}}}
+{"surfaceUpdate":{"components":[{"id":"root","component":{"Column":{"children":{"explicitList":["card"]}}}}]}}
+{"surfaceUpdate":{"components":[{"id":"card","component":{"Card":{"children":{"explicitList":["title","diff","risk","note","btns"]}}}}]}}
+{"surfaceUpdate":{"components":[{"id":"title","component":{"Text":{"usageHint":"h2","text":{"literalString":"Deploy payment-service to prod?"}}}}]}}
+{"surfaceUpdate":{"components":[{"id":"diff","component":{"Text":{"usageHint":"body","text":{"literalString":"3 files · +47/-12 · CI green · ENG-1234"}}}}]}}
+{"surfaceUpdate":{"components":[{"id":"risk","component":{"RadioGroup":{"label":{"literalString":"Rollout"},"fieldName":"rollout","options":[{"value":"canary","label":"Canary (10%)"},{"value":"full","label":"Full rollout"}]}}}]}}
+{"surfaceUpdate":{"components":[{"id":"note","component":{"TextInput":{"label":{"literalString":"Deploy note"},"fieldName":"note","multiline":true}}}]}}
+{"surfaceUpdate":{"components":[{"id":"btns","component":{"Row":{"alignment":"end","children":{"explicitList":["c","go"]}}}}]}}
+{"surfaceUpdate":{"components":[{"id":"c","component":{"Button":{"label":{"literalString":"Cancel"},"variant":"secondary","action":{"name":"cancel"}}}}]}}
+{"surfaceUpdate":{"components":[{"id":"go","component":{"Button":{"label":{"literalString":"Deploy"},"variant":"success","action":{"name":"approve"}}}}]}}
+{"beginRendering":{"root":"root"}}
 ```
 
-Exit code is `0`. Cancel → exit `1`. Timeout → exit `2`. Error → exit `3`.
+Native window opens. User picks "Canary (10%)", types a note, clicks Deploy. Stdout gets:
+
+```json
+{"status":"completed","data":{"action":"approve","data":{"rollout":"canary","note":"Monitoring dashboard on standby"},"context":{}}}
+```
+
+Exit code `0`. The agent continues. If the user cancelled → exit `1`. If timeout → exit `2`. If the URL/load errored → exit `3`.
+
+**The point: your agent doesn't write HTML/CSS. It emits a flat JSONL description of what UI it wants, and a native window appears.**
+
+---
 
 ## Use cases
 
+<table>
+<tr>
+<td width="50%" valign="top">
+
 ### Deploy approval
 
-<img src="media/approval.png" alt="Approval form" width="420" align="right">
+Show the diff, context, and a comment field. One click, agent continues with a structured result and the note goes into the deploy log.
 
-Agent wants to run a destructive action. Pop a real UI with the context (what it wants to do, why) plus a comment field. User says yes/no with one click — the comment goes into the deploy log.
+[`examples/hero-deploy-approval.jsonl`](examples/hero-deploy-approval.jsonl)
 
-[→ `examples/hero-deploy-approval.jsonl`](examples/hero-deploy-approval.jsonl)
+</td>
+<td width="50%" valign="top">
 
-<br clear="all">
+### Pick from options
 
-### Pick from agent-found options
+Agent enumerates candidates (PRs, branches, customers, files). User picks one with radio buttons. Agent proceeds.
 
-<img src="media/select.png" alt="Selection form" width="420" align="right">
+[`examples/multi-field-form.jsonl`](examples/)
 
-Agent enumerates candidates (PRs to review, branches to rebase onto, customers to inspect). User picks one. Agent continues with their choice.
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
 
-[→ `examples/multi-field-form.jsonl`](examples/)
+### Multi-field config
 
-<br clear="all">
+Text inputs + selects + checkboxes in one native form. Better than 6 terminal prompts in a row.
 
-### Form input
-
-<img src="media/form.png" alt="Multi-field form" width="420" align="right">
-
-Agent needs structured config. One form beats N terminal prompts. Text, select, checkbox, textarea — all native.
-
-<br clear="all">
+</td>
+<td width="50%" valign="top">
 
 ### Custom HTML via `agent://`
 
-When A2UI's 9 components aren't enough (charts, diagrams, diff views), pipe base64-encoded HTML on stdin. webview-cli serves it from an in-memory scheme handler. No HTTP server needed.
+When A2UI's components aren't enough (charts, diffs, diagrams), pipe base64-encoded HTML on stdin. In-memory scheme handler serves it — no HTTP server.
 
-[→ `docs/protocol.md#agent-scheme`](docs/protocol.md)
+[`docs/protocol.md#agent-scheme`](docs/protocol.md)
 
-## Why not Electron / Tauri / osascript
+</td>
+</tr>
+</table>
 
-| | webview-cli | Electron | Tauri | osascript |
-|---|---|---|---|---|
-| Binary size | **193KB** | 50MB+ | 8-15MB | built-in |
-| Cold start | **~180ms** | 500-800ms | 300-500ms | ~300ms |
-| Rich HTML/CSS | ✅ | ✅ | ✅ | ❌ (2 buttons + text) |
-| Structured JSON out | ✅ | app-specific | app-specific | ❌ (string) |
-| Spawnable subprocess | ✅ | ❌ (app lifecycle) | ❌ (app lifecycle) | ✅ |
-| Runtime dependencies | **none** | Electron runtime | WebKit2 + Rust | none |
-
-`gum` is in a different category — it's a terminal UI toolkit, not a native-window tool. Use `gum` for TUI spinners and selection; use `webview-cli` when you want a real window.
-
-## Supported A2UI components
-
-`Text`, `TextInput`, `Button`, `Column`, `Row`, `Card`, `Select`, `Checkbox`, `Divider`. Subset of [Google's A2UI v0.8 standard catalog](https://a2ui.org/specification/v0.8-a2ui/). See [`docs/a2ui-subset.md`](docs/a2ui-subset.md) for the full reference.
-
-Not shipped yet: `Image`, `List`, `RadioGroup`. On the roadmap for v0.2.
+---
 
 ## Install
 
-### Homebrew (recommended)
+### One command (recommended)
+
+```bash
+curl -sSL https://raw.githubusercontent.com/giannimassi/webview-cli/main/install.sh | bash
+```
+
+Handles Homebrew tap + formula install + Claude Code skill install + smoke test. Flags:
+
+- `--with-claude-skill` — force skill install even if `~/.claude` not detected
+- `--no-claude-skill` — skip skill install
+
+### Homebrew only
 
 ```bash
 brew tap giannimassi/tap
@@ -125,31 +191,33 @@ cd webview-cli
 make install   # copies to ~/bin/webview-cli
 ```
 
-Requires macOS 12+ and the Swift toolchain (bundled with Xcode or Xcode Command Line Tools).
+Requires macOS 12+ and the Swift toolchain (Xcode Command Line Tools is enough).
 
-## Claude Code skill
+---
 
-`webview-cli` ships with a [Claude Code skill](https://docs.claude.com/en/docs/claude-code/skills) so agents can `generate form → show → parse result` in one call:
+## Supported A2UI components
 
-```bash
-ln -s "$(pwd)/skill" ~/.claude/skills/webview
-```
+`Text`, `TextInput`, `Button`, `Column`, `Row`, `Card`, `Select`, `Checkbox`, `RadioGroup`, `Image`, `Divider`. Subset of [Google's A2UI v0.8 standard catalog](https://a2ui.org/specification/v0.8-a2ui/).
 
-The skill includes four copy-paste templates (approval, select, form, confirmation) and full workflow documentation. See [`skill/README.md`](skill/README.md).
+Full prop reference: [`docs/a2ui-subset.md`](docs/a2ui-subset.md). Protocol reference: [`docs/protocol.md`](docs/protocol.md). Architecture tour: [`docs/architecture.md`](docs/architecture.md).
+
+---
 
 ## How it works
 
-One Swift file, ~500 lines. `NSApplication` with `.accessory` policy (no Dock icon), one `NSWindow` with a `WKWebView`, `WKScriptMessageHandler` bridging JS to stdout, `WKURLSchemeHandler` serving an embedded renderer via `agent://`. Stdin feeds A2UI JSONL into the renderer. See [`docs/architecture.md`](docs/architecture.md) for the full tour.
+One Swift file, ~550 lines. `NSApplication` with `.accessory` policy (no Dock icon), one `NSWindow` with a `WKWebView`, `WKScriptMessageHandler` bridging JS events to stdout, `WKURLSchemeHandler` serving an embedded renderer via `agent://`. Stdin feeds A2UI JSONL into the renderer.
 
-The renderer itself is ~200 lines of vanilla JS — no React, no framework, no build step. It's embedded as a string literal in the Swift binary.
+The renderer itself is ~250 lines of vanilla ES — no React, no framework, no build step. It's embedded as a string literal in the Swift binary. "What CSS framework is that?" is a frequent question. The answer is none — system fonts, `-apple-system`, CSS custom properties, ~60 lines of hand-written styles.
 
-## Protocol
+See [`docs/architecture.md`](docs/architecture.md) for the tour.
 
-Full stdin/stdout/exit-code reference in [`docs/protocol.md`](docs/protocol.md).
+---
 
 ## Why macOS only
 
-The target user is already on macOS (Claude Code, Cursor, Codex CLI users skew heavily macOS). Cross-platform is possible with GTK/WebView2 — PRs welcome, but the maintainer is not splitting attention at v0.1. See [CONTRIBUTING.md](CONTRIBUTING.md) for scope.
+The target audience (Claude Code, Codex CLI, Cursor, MCP server authors) skews heavily macOS. A Linux port with GTK/WebKit2 or a Windows port with WebView2 is possible — the protocol is platform-independent, the rendering backend isn't. PRs welcome but out of v1 scope. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+---
 
 ## License
 
@@ -157,11 +225,11 @@ MIT — see [LICENSE](LICENSE).
 
 ## Credits
 
-- [A2UI](https://a2ui.org/) by Google — the declarative UI spec this implements a subset of
-- [CopilotKit](https://docs.ag-ui.com/) — for popularizing the agent-UI space and publishing reference renderers
+- [A2UI](https://a2ui.org/) by Google — the declarative UI spec this renders a subset of
+- Opus 4.7 — this tool was built in one evening with Claude Code driving the keyboard. It pairs well with its builder.
 
 ---
 
 <p align="center">
-  Built by <a href="https://github.com/giannimassi">@giannimassi</a>. If this helped you, <a href="https://github.com/giannimassi/webview-cli">leaving a star</a> is appreciated.
+  Built by <a href="https://github.com/giannimassi">@giannimassi</a>. If this unblocks one of your agent workflows, <a href="https://github.com/giannimassi/webview-cli">a star</a> is appreciated.
 </p>
