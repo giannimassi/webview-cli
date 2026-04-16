@@ -196,6 +196,9 @@ class AppCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NS
     var hasEmitted = false
     var timeoutTimer: Timer?
     let schemeHandler = AgentSchemeHandler()
+    // A2UI sync state
+    var pendingA2UIPayload: String? = nil
+    var rendererReady = false
 
     init(config: Config) {
         self.config = config
@@ -288,18 +291,26 @@ class AppCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NS
                 if trimmed.isEmpty { continue }
                 lines.append(trimmed)
             }
-            // EOF reached — all JSONL read. Send to renderer.
             let jsonArray = "[" + lines.joined(separator: ",") + "]"
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
-                let escaped = jsonArray
-                    .replacingOccurrences(of: "\\", with: "\\\\")
-                    .replacingOccurrences(of: "'", with: "\\'")
-                    .replacingOccurrences(of: "\n", with: "\\n")
-                self.webView.evaluateJavaScript("window.__a2uiLoad && window.__a2uiLoad('\(escaped)')") { _, err in
-                    if let err = err { writeStderr("[a2ui] JS eval error: \(err)") }
-                }
+                self.pendingA2UIPayload = jsonArray
+                self.flushA2UIIfReady()
             }
+        }
+    }
+
+    func flushA2UIIfReady() {
+        guard rendererReady, let payload = pendingA2UIPayload else { return }
+        pendingA2UIPayload = nil
+        // Safely pass JSON string to JS by base64-encoding it — avoids all escape issues.
+        // Decode via TextDecoder to preserve UTF-8 (atob alone returns latin1).
+        let b64 = Data(payload.utf8).base64EncodedString()
+        let js = """
+        window.__a2uiLoad(new TextDecoder('utf-8').decode(Uint8Array.from(atob('\(b64)'), c => c.charCodeAt(0))))
+        """
+        webView.evaluateJavaScript(js) { _, err in
+            if let err = err { writeStderr("[a2ui] JS eval error: \(err)") }
         }
     }
 
@@ -349,6 +360,14 @@ class AppCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NS
     }
 
     // MARK: - WKNavigationDelegate
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        if config.a2ui {
+            // A2UI renderer JS is loaded — safe to inject data now
+            rendererReady = true
+            flushA2UIIfReady()
+        }
+    }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         emitAndExit(status: "error", message: "Navigation failed: \(error.localizedDescription)", code: 3)
