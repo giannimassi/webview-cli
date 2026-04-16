@@ -1,6 +1,8 @@
 .build/
-webview-cli
+/webview-cli
 *.o
 *.dSYM/
 .DS_Store
 .claude/
+*.tar.gz
+media/.DS_Store
