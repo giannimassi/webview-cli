@@ -64,7 +64,7 @@ HTML_B64=$(base64 < custom.html)
 
 ## A2UI catalog (built-in)
 
-Supported components: `Text`, `TextInput`, `Button`, `Column`, `Row`, `Card`, `Select`, `Divider`. Subset of A2UI v0.8's standard catalog, focused on form/approval/selection use cases. Not supported: Image, List, data binding expressions, catalog negotiation, progressive rendering.
+Supported components: `Text`, `TextInput`, `Button`, `Column`, `Row`, `Card`, `Select`, `Checkbox`, `Divider`. Subset of A2UI v0.8's standard catalog, focused on form/approval/selection use cases. Not supported yet: Image, List, RadioGroup, data binding expressions, catalog negotiation, progressive rendering.
 
 ## Why not Electron / Tauri / Wails
 

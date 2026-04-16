@@ -1,0 +1,18 @@
+{"surfaceUpdate":{"components":[{"id":"root","component":{"Column":{"children":{"explicitList":["card"]}}}}]}}
+{"surfaceUpdate":{"components":[{"id":"card","component":{"Card":{"child":"content"}}}]}}
+{"surfaceUpdate":{"components":[{"id":"content","component":{"Column":{"children":{"explicitList":["title","subtitle","divider","stat_row","changes","comment","notify","buttons"]}}}}]}}
+{"surfaceUpdate":{"components":[{"id":"title","component":{"Text":{"usageHint":"h2","text":{"literalString":"Deploy payment-service to production?"}}}}]}}
+{"surfaceUpdate":{"components":[{"id":"subtitle","component":{"Text":{"usageHint":"subtitle","text":{"literalString":"Agent requesting human approval. Review below."}}}}]}}
+{"surfaceUpdate":{"components":[{"id":"divider","component":{"Divider":{}}}]}}
+{"surfaceUpdate":{"components":[{"id":"stat_row","component":{"Row":{"children":{"explicitList":["files","insertions","deletions","checks"]}}}}]}}
+{"surfaceUpdate":{"components":[{"id":"files","component":{"Text":{"usageHint":"caption","text":{"literalString":"3 files"}}}}]}}
+{"surfaceUpdate":{"components":[{"id":"insertions","component":{"Text":{"usageHint":"caption","text":{"literalString":"+47 insertions"}}}}]}}
+{"surfaceUpdate":{"components":[{"id":"deletions","component":{"Text":{"usageHint":"caption","text":{"literalString":"-12 deletions"}}}}]}}
+{"surfaceUpdate":{"components":[{"id":"checks","component":{"Text":{"usageHint":"caption","text":{"literalString":"CI: all green"}}}}]}}
+{"surfaceUpdate":{"components":[{"id":"changes","component":{"Text":{"usageHint":"body","text":{"literalString":"fix(api): handle rate-limit response webhook — retries with exponential backoff, dead-letters to SQS after 5 attempts. Linear: ENG-1234."}}}}]}}
+{"surfaceUpdate":{"components":[{"id":"comment","component":{"TextInput":{"label":{"literalString":"Deploy note (optional, added to release log)"},"placeholder":{"literalString":"e.g. urgent fix for customer X"},"fieldName":"note","multiline":true}}}]}}
+{"surfaceUpdate":{"components":[{"id":"notify","component":{"Checkbox":{"label":{"literalString":"Post to #eng-deploys when live"},"fieldName":"notify","checked":true}}}]}}
+{"surfaceUpdate":{"components":[{"id":"buttons","component":{"Row":{"alignment":"end","children":{"explicitList":["btn_cancel","btn_deploy"]}}}}]}}
+{"surfaceUpdate":{"components":[{"id":"btn_cancel","component":{"Button":{"label":{"literalString":"Cancel"},"variant":"secondary","action":{"name":"cancel"}}}}]}}
+{"surfaceUpdate":{"components":[{"id":"btn_deploy","component":{"Button":{"label":{"literalString":"Deploy"},"variant":"success","action":{"name":"approve"}}}}]}}
+{"beginRendering":{"root":"root"}}

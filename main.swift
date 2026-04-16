@@ -458,53 +458,74 @@ let a2uiRendererHTML = """
 """
 
 let a2uiRendererCSS = """
+:root {
+  --bg: #1c1c1e;
+  --surface: #2c2c2e;
+  --surface-2: #3a3a3c;
+  --text: #f2f2f7;
+  --muted: #8e8e93;
+  --accent: #0a84ff;
+  --danger: #ff453a;
+  --success: #32d74b;
+  --border: rgba(255,255,255,0.08);
+  --radius: 10px;
+  color-scheme: dark;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", ui-sans-serif, system-ui, sans-serif;
+  font-size: 14px;
+}
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-  background: #1a1a2e; color: #e0e0e0;
-  min-height: 100vh; padding: 1.5rem;
+  background: var(--bg); color: var(--text);
+  min-height: 100vh; padding: 1.25rem;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 .a2ui-column { display: flex; flex-direction: column; gap: 0.75rem; }
-.a2ui-row { display: flex; flex-direction: row; gap: 0.75rem; align-items: center; }
+.a2ui-row { display: flex; flex-direction: row; gap: 0.75rem; align-items: center; flex-wrap: wrap; }
 .a2ui-row.space-between { justify-content: space-between; }
 .a2ui-row.center { justify-content: center; }
 .a2ui-row.end { justify-content: flex-end; }
 .a2ui-card {
-  background: #16213e; border-radius: 12px; padding: 1.5rem;
-  box-shadow: 0 4px 24px rgba(0,0,0,0.2);
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 1.5rem;
 }
-.a2ui-text { line-height: 1.5; }
-.a2ui-text.h1 { font-size: 1.6rem; font-weight: 700; color: #fff; }
-.a2ui-text.h2 { font-size: 1.3rem; font-weight: 600; color: #fff; }
-.a2ui-text.h3 { font-size: 1.1rem; font-weight: 600; color: #fff; }
-.a2ui-text.subtitle { color: #8892b0; font-size: 0.9rem; }
-.a2ui-text.body { color: #c0c0d0; }
-.a2ui-text.caption { color: #6a6a8a; font-size: 0.8rem; }
+.a2ui-text { line-height: 1.5; letter-spacing: -0.01em; }
+.a2ui-text.h1 { font-size: 1.75rem; font-weight: 700; letter-spacing: -0.02em; }
+.a2ui-text.h2 { font-size: 1.35rem; font-weight: 600; letter-spacing: -0.02em; }
+.a2ui-text.h3 { font-size: 1.05rem; font-weight: 600; letter-spacing: -0.01em; }
+.a2ui-text.subtitle { color: var(--muted); font-size: 0.9rem; }
+.a2ui-text.body { color: var(--text); }
+.a2ui-text.caption { color: var(--muted); font-size: 0.8rem; line-height: 1.45; }
 .a2ui-input, .a2ui-textarea, .a2ui-select {
-  width: 100%; padding: 0.6rem 0.8rem;
-  border: 1px solid #2a2a4a; border-radius: 6px;
-  background: #0f0f23; color: #e0e0e0;
-  font-family: inherit; font-size: 0.9rem;
-  transition: border-color 0.15s;
+  width: 100%; padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border); border-radius: 7px;
+  background: var(--bg); color: var(--text);
+  font: inherit; font-size: 0.925rem;
+  transition: border-color 0.12s, background 0.12s;
 }
+.a2ui-input::placeholder, .a2ui-textarea::placeholder { color: var(--muted); }
 .a2ui-input:focus, .a2ui-textarea:focus, .a2ui-select:focus {
-  outline: none; border-color: #4a6cf7;
+  outline: none; border-color: var(--accent);
 }
-.a2ui-textarea { resize: vertical; min-height: 80px; }
-.a2ui-label { font-size: 0.85rem; color: #a0a0c0; margin-bottom: -0.4rem; }
+.a2ui-textarea { resize: vertical; min-height: 80px; line-height: 1.5; }
+.a2ui-label { font-size: 0.8rem; color: var(--muted); margin-bottom: -0.35rem; font-weight: 500; }
 .a2ui-button {
-  padding: 0.6rem 1.2rem; border: none; border-radius: 6px;
-  font-size: 0.9rem; font-weight: 600; cursor: pointer;
-  transition: opacity 0.15s, transform 0.1s;
+  padding: 0.55rem 1.1rem; border: 1px solid transparent; border-radius: 7px;
+  font: inherit; font-size: 0.9rem; font-weight: 600; cursor: pointer;
+  transition: filter 0.12s, transform 0.08s;
 }
-.a2ui-button:hover { opacity: 0.85; }
+.a2ui-button:hover { filter: brightness(1.1); }
 .a2ui-button:active { transform: scale(0.97); }
-.a2ui-button.primary { background: #4a6cf7; color: #fff; }
-.a2ui-button.secondary { background: #2a2a4a; color: #a0a0c0; }
-.a2ui-button.danger { background: #e74c3c; color: #fff; }
-.a2ui-button.success { background: #27ae60; color: #fff; }
-.a2ui-divider { border: none; border-top: 1px solid #2a2a4a; margin: 0.5rem 0; }
-.a2ui-select option { background: #0f0f23; }
+.a2ui-button.primary { background: var(--accent); color: #fff; }
+.a2ui-button.secondary { background: var(--surface-2); color: var(--text); }
+.a2ui-button.danger { background: var(--danger); color: #fff; }
+.a2ui-button.success { background: var(--success); color: #1a1a1c; }
+.a2ui-divider { border: none; border-top: 1px solid var(--border); margin: 0.25rem 0; }
+.a2ui-select { appearance: none; background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%238e8e93' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 0.75rem center; padding-right: 2rem; }
+.a2ui-select option { background: var(--bg); color: var(--text); }
+.a2ui-checkbox { display: flex; align-items: center; gap: 0.5rem; padding: 0.3rem 0; cursor: pointer; }
+.a2ui-checkbox input { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
+.a2ui-checkbox span { font-size: 0.925rem; }
 """
 
 let a2uiRendererJS = """
@@ -561,6 +582,7 @@ let a2uiRendererJS = """
       case 'TextInput': return renderTextInput(props);
       case 'Button': return renderButton(props);
       case 'Select': return renderSelect(props);
+      case 'Checkbox': return renderCheckbox(props);
       case 'Divider': return renderDivider();
       default:
         const fallback = document.createElement('div');
@@ -668,7 +690,24 @@ let a2uiRendererJS = """
   }
 
   function renderDivider() {
-    return document.createElement('hr');
+    const hr = document.createElement('hr');
+    hr.className = 'a2ui-divider';
+    return hr;
+  }
+
+  function renderCheckbox(props) {
+    const label = document.createElement('label');
+    label.className = 'a2ui-checkbox';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.checked = !!props.checked;
+    const fieldName = props.fieldName || 'checkbox_' + Math.random().toString(36).slice(2,6);
+    input.dataset.a2uiField = fieldName;
+    const text = document.createElement('span');
+    text.textContent = resolveValue(props.label);
+    label.appendChild(input);
+    label.appendChild(text);
+    return label;
   }
 
   function processMessages(messages) {
