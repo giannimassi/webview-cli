@@ -714,6 +714,12 @@ body {
 .a2ui-markdown-preview a { color: var(--accent); text-decoration: none; }
 .a2ui-markdown-preview a:hover { text-decoration: underline; }
 .a2ui-markdown-preview hr { border: none; border-top: 1px solid var(--border); margin: 1rem 0; }
+.a2ui-markdown-doc--with-comments { display: grid; grid-template-columns: 1fr 220px; gap: 12px; }
+.a2ui-markdown-comments-pane { padding: 8px 10px; border-left: 1px solid rgba(255,255,255,0.08); }
+.a2ui-markdown-comments-pane h5 { margin: 0 0 8px 0; font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: 0.5px; }
+.a2ui-markdown-comments-list:empty + .a2ui-markdown-comments-empty { display: block; }
+.a2ui-markdown-comments-list:not(:empty) + .a2ui-markdown-comments-empty { display: none; }
+.a2ui-markdown-comments-empty { font-size: 11px; color: #666; font-style: italic; padding: 6px 0; }
 """
 
 let a2uiRendererJS = """
@@ -979,6 +985,23 @@ let a2uiRendererJS = """
     } else {
       console.error('renderMarkdown not available');
       preview.textContent = 'Error: markdown renderer not loaded';
+    }
+
+    if (props.allowComments === true) {
+      wrapper.classList.add('a2ui-markdown-doc--with-comments');
+      const pane = document.createElement('aside');
+      pane.className = 'a2ui-markdown-comments-pane';
+      const heading = document.createElement('h5');
+      heading.textContent = 'Comments';
+      pane.appendChild(heading);
+      const list = document.createElement('div');
+      list.className = 'a2ui-markdown-comments-list';
+      pane.appendChild(list);
+      const empty = document.createElement('div');
+      empty.className = 'a2ui-markdown-comments-empty';
+      empty.textContent = 'Click any paragraph to add a comment.';
+      pane.appendChild(empty);
+      wrapper.appendChild(pane);
     }
 
     return wrapper;
