@@ -1019,6 +1019,9 @@ let markdownRendererJS = #"""
     // Dangerous elements to remove entirely
     const dangerousElements = ['script', 'iframe', 'object', 'embed', 'style', 'link', 'base', 'meta'];
 
+    // Safe raster image MIME types (binary only, requires base64)
+    const SAFE_DATA_IMAGE = /^data:image\/(png|jpeg|jpg|gif|webp|bmp|avif);base64,/i;
+
     // Recursively walk the DOM and sanitize
     function walk(node) {
       if (node.nodeType !== 1) return; // Only process element nodes
@@ -1041,14 +1044,31 @@ let markdownRendererJS = #"""
       }
 
       // Sanitize URL attributes for dangerous schemes
-      const urlAttrs = ['href', 'src', 'formaction', 'srcdoc', 'xlink:href'];
+      const urlAttrs = ['href', 'src', 'formaction', 'action', 'srcdoc', 'xlink:href', 'srcset', 'poster', 'usemap', 'background'];
       for (const attrName of urlAttrs) {
         const attrValue = node.getAttribute(attrName);
         if (attrValue) {
-          const trimmed = attrValue.replace(/^\s+/, '').toLowerCase();
-          if (trimmed.startsWith('javascript:') ||
-              trimmed.startsWith('vbscript:') ||
-              (trimmed.startsWith('data:') && !trimmed.startsWith('data:image/'))) {
+          // Use trim() to handle all Unicode whitespace (ASCII + non-breaking space, form feed, etc.)
+          const trimmed = attrValue.trim().toLowerCase();
+
+          // Special handling for srcset: it's comma-separated, check all candidates
+          if (attrName === 'srcset') {
+            const candidates = trimmed.split(',').map(c => c.trim());
+            let isSafe = true;
+            for (const candidate of candidates) {
+              const url = candidate.split(/\s+/)[0]; // Extract URL from "url 2x" format
+              if (url.startsWith('javascript:') || url.startsWith('vbscript:') ||
+                  (url.startsWith('data:') && !SAFE_DATA_IMAGE.test(url))) {
+                isSafe = false;
+                break;
+              }
+            }
+            if (!isSafe) {
+              node.removeAttribute(attrName);
+            }
+          } else if (trimmed.startsWith('javascript:') ||
+                     trimmed.startsWith('vbscript:') ||
+                     (trimmed.startsWith('data:') && !SAFE_DATA_IMAGE.test(trimmed))) {
             node.removeAttribute(attrName);
           }
         }
