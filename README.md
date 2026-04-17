@@ -1,7 +1,7 @@
 <h1 align="center">webview-cli</h1>
 <p align="center">
   <strong>Native macOS UIs for CLI AI agents.</strong><br>
-  <sub>193KB · ~180ms cold start · no Electron · no npm · no runtime</sub>
+  <sub>~290KB · ~180ms cold start · no Electron · no npm · no runtime</sub>
 </p>
 
 <p align="center">
@@ -12,7 +12,7 @@
   <a href="https://github.com/giannimassi/webview-cli/actions"><img src="https://github.com/giannimassi/webview-cli/workflows/CI/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License"></a>
   <img src="https://img.shields.io/badge/macOS-12%2B-black" alt="macOS 12+">
-  <img src="https://img.shields.io/badge/binary-193KB-green" alt="193KB">
+  <img src="https://img.shields.io/badge/binary-~290KB-green" alt="193KB">
   <img src="https://img.shields.io/badge/cold%20start-~180ms-orange" alt="~180ms">
 </p>
 
@@ -24,7 +24,7 @@ curl -sSL https://raw.githubusercontent.com/giannimassi/webview-cli/main/install
 
 ---
 
-## 193KB vs Electron's 50MB+
+## ~290KB vs Electron's 50MB+
 
 Your AI agent needs to ask you a question that doesn't fit in a terminal prompt. The choices today:
 
@@ -33,11 +33,11 @@ Your AI agent needs to ask you a question that doesn't fit in a terminal prompt.
 - **`osascript` AppleScript dialog:** built-in, ~300ms, gives you 2 buttons and a text field. Useless for anything structured.
 - **Terminal `[y/N]`:** the default. Fine for yes/no, terrible for "review this diff" or "pick one of these 12 PRs."
 
-**webview-cli:** 193KB single binary, ~180ms cold start, a real native macOS window, structured JSON back to the agent, process dies clean.
+**webview-cli:** ~290KB single binary, ~180ms cold start, a real native macOS window, structured JSON back to the agent, process dies clean.
 
 | | webview-cli | Electron | Tauri / Wails | osascript |
 |---|---|---|---|---|
-| Binary size | **193KB** | 50MB+ | 8–15MB | built-in |
+| Binary size | **~290KB** | 50MB+ | 8–15MB | built-in |
 | Cold start | **~180ms** | 500–800ms | 300–500ms | ~300ms |
 | Rich HTML/CSS UI | ✅ | ✅ | ✅ | ❌ |
 | Structured JSON out | ✅ | app-specific | app-specific | ❌ (string) |
@@ -170,6 +170,27 @@ Priority dropdown, complexity radio, and notes in one native form. Agent gets st
 
 </td>
 </tr>
+<tr>
+<td width="50%" valign="top">
+
+### Markdown review
+
+Agent generates a spec or doc. User reviews with paragraph-level comments, optionally edits the source, and submits structured feedback. Agent reads the review and can iterate.
+
+[Full example](examples/markdown-review.md)
+
+</td>
+<td width="50%" valign="top">
+
+### Combine markdown review with form
+
+Review a spec AND pick options in one window. Comments, edits, and form fields together.
+
+[Full example](examples/markdown-review-edits.md)
+
+</td>
+</tr>
+
 </table>
 
 <details>
