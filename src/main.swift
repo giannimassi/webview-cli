@@ -720,6 +720,18 @@ body {
 .a2ui-markdown-comments-list:empty + .a2ui-markdown-comments-empty { display: block; }
 .a2ui-markdown-comments-list:not(:empty) + .a2ui-markdown-comments-empty { display: none; }
 .a2ui-markdown-comments-empty { font-size: 11px; color: #666; font-style: italic; padding: 6px 0; }
+.a2ui-markdown-composer { background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; padding: 8px; margin-bottom: 8px; }
+.a2ui-markdown-composer-quote { font-size: 10px; color: var(--muted); font-style: italic; margin-bottom: 6px; line-height: 1.4; word-break: break-word; }
+.a2ui-markdown-composer-body { width: 100%; padding: 6px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg); color: var(--text); font: 11px Monaco, monospace; resize: vertical; min-height: 60px; margin-bottom: 6px; }
+.a2ui-markdown-composer-body:focus { outline: none; border-color: var(--accent); }
+.a2ui-markdown-composer-actions { display: flex; gap: 6px; justify-content: flex-end; }
+.a2ui-markdown-composer-actions button { padding: 4px 12px; font-size: 10px; border: 1px solid var(--border); border-radius: 5px; background: var(--surface); color: var(--text); cursor: pointer; transition: filter 0.12s; }
+.a2ui-markdown-composer-actions button:hover { filter: brightness(1.15); }
+.a2ui-markdown-composer-actions button.save { background: var(--success); color: #1a1a1c; }
+.a2ui-markdown-composer-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
+.a2ui-markdown-comment { background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; padding: 8px; margin-bottom: 8px; }
+.a2ui-markdown-comment-quote { font-size: 10px; color: var(--muted); font-style: italic; margin-bottom: 4px; line-height: 1.4; }
+.a2ui-markdown-comment-body { font-size: 11px; color: var(--text); line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
 """
 
 let a2uiRendererJS = """
@@ -1002,6 +1014,108 @@ let a2uiRendererJS = """
       empty.textContent = 'Click any paragraph to add a comment.';
       pane.appendChild(empty);
       wrapper.appendChild(pane);
+
+      // Initialize comment state model
+      wrapper._mdComments = [];
+      let composerCounter = 0;
+
+      // Click handler for blocks in preview
+      preview.addEventListener('click', (e) => {
+        const block = e.target.closest('[data-src-start]');
+        if (!block) return;
+        if (e.target.closest('.a2ui-markdown-composer')) return;
+        if (e.target.closest('.a2ui-markdown-comment')) return;
+
+        const startLine = parseInt(block.dataset.srcStart, 10);
+        const endLine = parseInt(block.dataset.srcEnd, 10);
+        let quoted = block.textContent.trim().split('\n')[0];
+        if (quoted.length > 200) quoted = quoted.slice(0, 200);
+
+        // Remove existing composer if any
+        const existing = list.querySelector('.a2ui-markdown-composer');
+        if (existing) existing.remove();
+
+        // Create composer card
+        const composer = document.createElement('div');
+        composer.className = 'a2ui-markdown-composer';
+        composer.dataset.srcStart = startLine;
+        composer.dataset.srcEnd = endLine;
+
+        const quote = document.createElement('div');
+        quote.className = 'a2ui-markdown-composer-quote';
+        quote.textContent = '"' + quoted + '"';
+        composer.appendChild(quote);
+
+        const textarea = document.createElement('textarea');
+        textarea.className = 'a2ui-markdown-composer-body';
+        textarea.placeholder = 'Add a comment…';
+        composer.appendChild(textarea);
+
+        const actions = document.createElement('div');
+        actions.className = 'a2ui-markdown-composer-actions';
+
+        const cancelBtn = document.createElement('button');
+        cancelBtn.textContent = 'Cancel';
+        cancelBtn.addEventListener('click', () => { composer.remove(); });
+        actions.appendChild(cancelBtn);
+
+        const saveBtn = document.createElement('button');
+        saveBtn.className = 'save';
+        saveBtn.textContent = 'Save';
+        saveBtn.disabled = true;
+
+        const updateSaveBtn = () => {
+          saveBtn.disabled = !textarea.value.trim();
+        };
+        textarea.addEventListener('input', updateSaveBtn);
+        textarea.addEventListener('keydown', (e) => {
+          if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+            e.preventDefault();
+            if (!saveBtn.disabled) saveBtn.click();
+          }
+          if (e.key === 'Escape') {
+            e.preventDefault();
+            composer.remove();
+          }
+        });
+
+        saveBtn.addEventListener('click', () => {
+          const body = textarea.value.trim();
+          if (!body) return;
+          const comment = {
+            id: ++composerCounter,
+            source_line_start: startLine,
+            source_line_end: endLine,
+            quoted_text: quoted,
+            body: body
+          };
+          wrapper._mdComments.push(comment);
+
+          // Replace composer with committed-comment card
+          const card = document.createElement('div');
+          card.className = 'a2ui-markdown-comment';
+          card.dataset.commentId = comment.id;
+          card.dataset.srcStart = startLine;
+          card.dataset.srcEnd = endLine;
+
+          const cardQuote = document.createElement('div');
+          cardQuote.className = 'a2ui-markdown-comment-quote';
+          cardQuote.textContent = '"' + quoted + '"';
+          card.appendChild(cardQuote);
+
+          const cardBody = document.createElement('div');
+          cardBody.className = 'a2ui-markdown-comment-body';
+          cardBody.textContent = body;
+          card.appendChild(cardBody);
+
+          composer.replaceWith(card);
+        });
+
+        actions.appendChild(saveBtn);
+        composer.appendChild(actions);
+        list.insertBefore(composer, list.firstChild);
+        textarea.focus();
+      };
     }
 
     return wrapper;
