@@ -1027,6 +1027,10 @@ let a2uiRendererJS = """
 
     // Get markdown text
     const text = props.text || '';
+
+    // Initialize editor state (exists even if edits disabled)
+    wrapper._mdEditedText = text;
+    wrapper._mdModified = false;
     if (!text) {
       console.warn('[MarkdownDoc] Missing text prop for component: ' + fieldName);
       preview.textContent = '(no content)';
@@ -1043,6 +1047,36 @@ let a2uiRendererJS = """
     if (props.allowEdits === true) {
       sourceTextarea = document.createElement('textarea');
       sourceTextarea.className = 'a2ui-markdown-source';
+      // Input listener: track modifications
+      sourceTextarea.addEventListener('input', () => {
+        wrapper._mdEditedText = sourceTextarea.value;
+        wrapper._mdModified = sourceTextarea.value !== text;
+      });
+
+      // Tab key handler: indent/outdent
+      sourceTextarea.addEventListener('keydown', (e) => {
+        if (e.key !== 'Tab') return;
+        e.preventDefault();
+        const el = sourceTextarea;
+        const { selectionStart: s, selectionEnd: t, value: v } = el;
+        if (!e.shiftKey) {
+          // Tab: insert 2 spaces at cursor (replacing any selection)
+          el.value = v.slice(0, s) + '  ' + v.slice(t);
+          el.selectionStart = el.selectionEnd = s + 2;
+        } else {
+          // Shift+Tab: outdent 2 spaces if the line's start has them
+          const lineStart = v.lastIndexOf('
+', s - 1) + 1;
+          if (v.slice(lineStart, lineStart + 2) === '  ') {
+            el.value = v.slice(0, lineStart) + v.slice(lineStart + 2);
+            const shift = s >= lineStart + 2 ? 2 : (s - lineStart);
+            el.selectionStart = s - shift;
+            el.selectionEnd = t - shift;
+          }
+        }
+        // Input event doesn't auto-fire on programmatic .value change — dispatch manually:
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+      });
       sourceTextarea.setAttribute('hidden', '');
       sourceTextarea.value = text;
       wrapper.appendChild(sourceTextarea);
@@ -1050,6 +1084,10 @@ let a2uiRendererJS = """
       // Tab switching handler
       const switchTab = (tabName) => {
         if (tabName === 'preview') {
+          // Re-render preview from current source if modified
+          if (wrapper._mdModified && window.renderMarkdown) {
+            window.renderMarkdown(sourceTextarea.value, preview, { allowHtml: props.allowHtml === true });
+          }
           preview.removeAttribute('hidden');
           if (sourceTextarea) sourceTextarea.setAttribute('hidden', '');
           if (previewTab) {
