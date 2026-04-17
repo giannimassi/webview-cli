@@ -1,255 +1,139 @@
-import AppKit
+import Cocoa
 import WebKit
 
-// MARK: - CLI Argument Parsing
+// MARK: - Config
 
 struct Config {
     var url: String = ""
-    var title: String = "webview-cli"
-    var width: Int = 1024
-    var height: Int = 768
-    var timeout: Int = 0
     var a2ui: Bool = false
-    var x: Int? = nil  // nil = center on screen
-    var y: Int? = nil
-    var screen: Int = 0  // NSScreen index; 0 = main
     var markdownMode: Bool = false
+    var allowHtml: Bool = false
     var comments: Bool = false
     var edits: Bool = false
-    var allowHtml: Bool = false
+    var title: String = "webview-cli"
+    var timeout: Int?
+    var windowWidth: Int = 800
+    var windowHeight: Int = 600
 }
+
+// MARK: - Argument Parser
 
 func parseArgs() -> Config? {
     var config = Config()
-    let args = CommandLine.arguments
     var i = 1
-    while i < args.count {
-        switch args[i] {
-        case "--url":
-            i += 1; guard i < args.count else { return nil }
-            config.url = args[i]
-        case "--title":
-            i += 1; guard i < args.count else { return nil }
-            config.title = args[i]
-        case "--width":
-            i += 1; guard i < args.count else { return nil }
-            config.width = Int(args[i]) ?? 1024
-        case "--height":
-            i += 1; guard i < args.count else { return nil }
-            config.height = Int(args[i]) ?? 768
-        case "--timeout":
-            i += 1; guard i < args.count else { return nil }
-            config.timeout = Int(args[i]) ?? 0
-        case "--a2ui":
+
+    while i < CommandLine.argc {
+        let arg = CommandLine.arguments[i]
+
+        if arg == "--url" {
+            i += 1
+            guard i < CommandLine.argc else { return nil }
+            config.url = CommandLine.arguments[i]
+        } else if arg == "--a2ui" {
             config.a2ui = true
-        case "--markdown":
+        } else if arg == "--markdown" {
             config.markdownMode = true
-        case "--comments":
-            config.comments = true
-        case "--edits":
-            config.edits = true
-        case "--allow-html":
+        } else if arg == "--allow-html" {
             config.allowHtml = true
-        case "--x":
-            i += 1; guard i < args.count else { return nil }
-            config.x = Int(args[i])
-        case "--y":
-            i += 1; guard i < args.count else { return nil }
-            config.y = Int(args[i])
-        case "--screen":
-            i += 1; guard i < args.count else { return nil }
-            config.screen = Int(args[i]) ?? 0
-        case "--help", "-h":
-            printUsage(); exit(0)
-        default:
-            if config.url.isEmpty && !args[i].hasPrefix("-") {
-                config.url = args[i]
-            } else {
-                writeStderr("Unknown argument: \(args[i])"); return nil
-            }
+        } else if arg == "--comments" {
+            config.comments = true
+        } else if arg == "--edits" {
+            config.edits = true
+        } else if arg == "--title" {
+            i += 1
+            guard i < CommandLine.argc else { return nil }
+            config.title = CommandLine.arguments[i]
+        } else if arg == "--timeout" {
+            i += 1
+            guard i < CommandLine.argc else { return nil }
+            config.timeout = Int(CommandLine.arguments[i])
+        } else if arg == "--width" {
+            i += 1
+            guard i < CommandLine.argc else { return nil }
+            config.windowWidth = Int(CommandLine.arguments[i]) ?? 800
+        } else if arg == "--height" {
+            i += 1
+            guard i < CommandLine.argc else { return nil }
+            config.windowHeight = Int(CommandLine.arguments[i]) ?? 600
+        } else if arg == "-h" || arg == "--help" {
+            return nil
         }
+
         i += 1
     }
 
-    // Validate mutual exclusion: --markdown incompatible with --a2ui or --url
-    if config.markdownMode {
-        if config.a2ui {
-            writeStderr("Error: --markdown and --a2ui are mutually exclusive")
-            return nil
-        }
-        if !config.url.isEmpty {
-            writeStderr("Error: --markdown and --url are mutually exclusive")
-            return nil
-        }
-    }
-
-    // In a2ui mode, URL is optional (uses agent://host/index.html)
-    if !config.a2ui && !config.markdownMode && config.url.isEmpty { return nil }
     return config
 }
 
 func printUsage() {
     let usage = """
-    Usage: webview-cli [--url <url>] [--a2ui] [--markdown] [options]
+Usage: webview-cli [--url <url>] [--a2ui] [--markdown] [options]
 
-    Opens a native macOS webview. The page signals completion by calling:
-      window.webkit.messageHandlers.complete.postMessage({...})
+Opens a native macOS webview. The page signals completion by calling:
+  window.webkit.messageHandlers.complete.postMessage({...})
 
-    Modes:
-      --url <url>        Open a URL (http/https/file/agent)
-      --a2ui             A2UI mode: reads A2UI JSONL from stdin, renders UI,
-                         returns userAction on stdout
-      --markdown         Markdown editor mode: reads markdown from stdin, renders
-                         interactive editor with optional comments and edits
+Modes:
+  --url <url>        Open a URL (http/https/file/agent)
+  --a2ui             A2UI mode: reads A2UI JSONL from stdin, renders UI,
+                     returns userAction on stdout
+  --markdown         Markdown editor mode: reads markdown from stdin, renders
+                     interactive editor with optional comments and edits
 
-    Options:
-      --title <title>    Window title (default: "webview-cli")
-      --width <px>       Window width (default: 1024)
-      --height <px>      Window height (default: 768)
-      --timeout <sec>    Session timeout, 0=none (default: 0)
-      --comments         Enable comments in markdown mode
-      --edits            Enable edit tracking in markdown mode
-      --allow-html       Allow HTML in markdown mode
-
-    Stdin protocol (when using agent:// URLs or --a2ui):
-      {"type":"load","resources":{"path.html":"<base64>","app.js":"<base64>"}}
-      {"type":"close"}
-
-    Exit codes: 0=completed, 1=cancelled, 2=timeout, 3=error
-    """
-    writeStderr(usage)
+Options:
+  --allow-html       Allow unsafe HTML in markdown (sanitization disabled)
+  --comments         Enable comments UI (markdown mode)
+  --edits            Enable source edit tab (markdown mode)
+  --title <title>    Window title (default: webview-cli)
+  --timeout <secs>   Auto-close after timeout (0 = never)
+  --width <px>       Window width (default: 800)
+  --height <px>      Window height (default: 600)
+  -h, --help         Show this help
+"""
+    print(usage)
 }
 
-// MARK: - Output Helpers
-
-func writeStdout(_ string: String) {
-    if let data = (string + "\n").data(using: .utf8) {
-        FileHandle.standardOutput.write(data)
-    }
-}
-
-func writeStderr(_ string: String) {
-    if let data = (string + "\n").data(using: .utf8) {
-        FileHandle.standardError.write(data)
-    }
-}
-
-func emitResult(status: String, data: Any? = nil, message: String? = nil) {
-    var result: [String: Any] = ["status": status]
-    if let data = data { result["data"] = data }
-    if let message = message { result["message"] = message }
-    if let jsonData = try? JSONSerialization.data(withJSONObject: result),
-       let jsonString = String(data: jsonData, encoding: .utf8) {
-        writeStdout(jsonString)
-    }
-}
-
-// MARK: - Agent Scheme Handler
-
-class AgentSchemeHandler: NSObject, WKURLSchemeHandler {
-    var resources: [String: (Data, String)] = [:]
-
-    func webView(_ webView: WKWebView, start urlSchemeTask: any WKURLSchemeTask) {
-        guard let url = urlSchemeTask.request.url else {
-            urlSchemeTask.didFailWithError(URLError(.badURL))
-            return
-        }
-        let path = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        let key = path.isEmpty ? "index.html" : path
-
-        guard let (data, mime) = resources[key] else {
-            urlSchemeTask.didFailWithError(URLError(.fileDoesNotExist))
-            return
-        }
-        let response = URLResponse(
-            url: url, mimeType: mime,
-            expectedContentLength: data.count, textEncodingName: "utf-8"
-        )
-        urlSchemeTask.didReceive(response)
-        urlSchemeTask.didReceive(data)
-        urlSchemeTask.didFinish()
-    }
-
-    func webView(_ webView: WKWebView, stop urlSchemeTask: any WKURLSchemeTask) {}
-
-    func loadResources(_ resources: [String: String]) {
-        for (path, base64Content) in resources {
-            guard let data = Data(base64Encoded: base64Content) else {
-                writeStderr("[agent] Failed to decode base64 for \(path)")
-                continue
-            }
-            let mime = mimeType(for: path)
-            self.resources[path] = (data, mime)
-        }
-    }
-
-    func loadRawResource(path: String, content: String, mime: String? = nil) {
-        guard let data = content.data(using: .utf8) else { return }
-        self.resources[path] = (data, mime ?? mimeType(for: path))
-    }
-
-    private func mimeType(for path: String) -> String {
-        if path.hasSuffix(".html") { return "text/html" }
-        if path.hasSuffix(".js") { return "application/javascript" }
-        if path.hasSuffix(".css") { return "text/css" }
-        if path.hasSuffix(".json") { return "application/json" }
-        if path.hasSuffix(".svg") { return "image/svg+xml" }
-        if path.hasSuffix(".png") { return "image/png" }
-        return "application/octet-stream"
-    }
-}
-
-// MARK: - Stdin Reader
-
-class StdinReader {
-    weak var coordinator: AppCoordinator?
-    private var source: DispatchSourceRead?
-
-    init(coordinator: AppCoordinator) {
-        self.coordinator = coordinator
-    }
-
-    func start() {
-        let stdin = FileHandle.standardInput
-        source = DispatchSource.makeReadSource(fileDescriptor: stdin.fileDescriptor, queue: .global())
-        source?.setEventHandler { [weak self] in
-            let data = stdin.availableData
-            guard !data.isEmpty else {
-                // EOF — stdin closed
-                return
-            }
-            if let line = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !line.isEmpty {
-                DispatchQueue.main.async {
-                    self?.coordinator?.handleStdinCommand(line)
-                }
-            }
-        }
-        source?.resume()
-    }
+func writeStderr(_ msg: String) {
+    fputs(msg + "\n", stderr)
 }
 
 // MARK: - App Coordinator
 
-class AppCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NSWindowDelegate {
+class AppCoordinator: NSObject, WKScriptMessageHandler {
     let config: Config
-    var window: NSWindow!
     var webView: WKWebView!
-    var hasEmitted = false
-    var timeoutTimer: Timer?
-    let schemeHandler = AgentSchemeHandler()
-    // A2UI sync state
-    var pendingA2UIPayload: String? = nil
+    var window: NSWindow!
+    var inputBuffer = ""
+    var pendingA2UIPayload: String?
     var rendererReady = false
+    var schemeHandler: CustomSchemeHandler!
 
     init(config: Config) {
         self.config = config
         super.init()
+
+        setupWebView()
+        setupWindow()
+
+        if config.a2ui {
+            readA2UIFromStdin()
+        } else if config.markdownMode {
+            readMarkdownFromStdin()
+        } else if !config.url.isEmpty {
+            if let url = URL(string: config.url) {
+                webView.load(URLRequest(url: url))
+            }
+        }
     }
 
-    func run() {
-        let webConfig = WKWebViewConfiguration()
-        let contentController = WKUserContentController()
+    func setupWebView() {
+        let config = WKWebViewConfiguration()
+
+        // Register custom scheme handler
+        schemeHandler = CustomSchemeHandler()
+        config.setURLSchemeHandler(schemeHandler, forURLScheme: "resource")
+
+        // Inject script for error handling
+        let contentController = config.userContentController
         contentController.add(self, name: "complete")
         contentController.add(self, name: "ready")
 
@@ -262,140 +146,152 @@ class AppCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NS
                 return false;
             };
             """,
-            injectionTime: .atDocumentStart, forMainFrameOnly: true
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
         )
         contentController.addUserScript(errorScript)
-        webConfig.userContentController = contentController
 
-        // Register agent:// scheme handler
-        webConfig.setURLSchemeHandler(schemeHandler, forURLScheme: "agent")
-
-        webView = WKWebView(frame: .zero, configuration: webConfig)
+        webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = self
+    }
 
-        // Select the target screen (0 = main, 1+ = secondary displays in NSScreen.screens order)
-        let screens = NSScreen.screens
-        for (i, s) in screens.enumerated() {
-            writeStderr("[screen \(i)] frame=\(Int(s.frame.origin.x)),\(Int(s.frame.origin.y)) \(Int(s.frame.width))x\(Int(s.frame.height))\(s == NSScreen.main ? " MAIN" : "")")
-        }
-        let targetScreen = (config.screen >= 0 && config.screen < screens.count) ? screens[config.screen] : (NSScreen.main ?? screens.first!)
-        let screenFrame = targetScreen.visibleFrame
-        writeStderr("[chosen screen \(config.screen)] visibleFrame=\(Int(screenFrame.origin.x)),\(Int(screenFrame.origin.y)) \(Int(screenFrame.width))x\(Int(screenFrame.height))")
-        // AppKit y=0 is BOTTOM of the global space. --y in CLI is from TOP of the target screen.
-        let winX: CGFloat = config.x.map { CGFloat($0) + screenFrame.origin.x }
-            ?? (screenFrame.width - CGFloat(config.width)) / 2 + screenFrame.origin.x
-        let winY: CGFloat = config.y.map { screenFrame.maxY - CGFloat($0) - CGFloat(config.height) }
-            ?? (screenFrame.height - CGFloat(config.height)) / 2 + screenFrame.origin.y
-        let windowRect = NSRect(x: winX, y: winY, width: CGFloat(config.width), height: CGFloat(config.height))
-        writeStderr("[window rect] x=\(Int(winX)) y=\(Int(winY)) w=\(config.width) h=\(config.height)")
-
-        window = NSWindow(
-            contentRect: windowRect,
-            styleMask: [.titled, .closable, .resizable, .miniaturizable],
-            backing: .buffered, defer: false
+    func setupWindow() {
+        let screen = NSScreen.main!
+        let rect = NSRect(
+            x: (screen.visibleFrame.width - CGFloat(config.windowWidth)) / 2,
+            y: (screen.visibleFrame.height - CGFloat(config.windowHeight)) / 2,
+            width: CGFloat(config.windowWidth),
+            height: CGFloat(config.windowHeight)
         )
+
+        window = NSWindow(contentRect: rect, styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = config.title
         window.contentView = webView
         window.delegate = self
-        window.isReleasedWhenClosed = false
-
-        if config.a2ui {
-            setupA2UIMode()
-        } else if config.markdownMode {
-            setupMarkdownMode()
-        } else {
-            guard let url = URL(string: config.url), url.scheme != nil else {
-                emitAndExit(status: "error", message: "Invalid URL (must include scheme): \(config.url)", code: 3)
-                return
-            }
-            webView.load(URLRequest(url: url))
-        }
-
         window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-        writeStderr("[wid] \(window.windowNumber)")
 
-        if config.timeout > 0 {
-            timeoutTimer = Timer.scheduledTimer(withTimeInterval: TimeInterval(config.timeout), repeats: false) { [weak self] _ in
-                self?.handleTimeout()
+        // Apply timeout if specified
+        if let timeout = config.timeout, timeout > 0 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(timeout)) {
+                self.emitAndExit(status: "timeout", code: 124)
             }
         }
-    }
-
-    // MARK: - A2UI Mode
-
-    func setupA2UIMode() {
-        // Load the built-in A2UI renderer into agent:// scheme
-        schemeHandler.loadRawResource(path: "index.html", content: a2uiRendererHTML)
-        schemeHandler.loadRawResource(path: "renderer.js", content: a2uiRendererJS)
-        schemeHandler.loadRawResource(path: "styles.css", content: a2uiRendererCSS)
-        schemeHandler.loadRawResource(path: "micromark.js", content: micromarkJS)
-        schemeHandler.loadRawResource(path: "markdown-renderer.js", content: markdownRendererJS)
-
-        // Read A2UI JSONL from stdin on a background thread
-        readA2UIFromStdin()
-
-        // Navigate to the renderer
-        webView.load(URLRequest(url: URL(string: "agent://host/index.html")!))
-    }
-
-    func setupMarkdownMode() {
-        // Load the built-in A2UI renderer into agent:// scheme
-        schemeHandler.loadRawResource(path: "index.html", content: a2uiRendererHTML)
-        schemeHandler.loadRawResource(path: "renderer.js", content: a2uiRendererJS)
-        schemeHandler.loadRawResource(path: "styles.css", content: a2uiRendererCSS)
-        schemeHandler.loadRawResource(path: "micromark.js", content: micromarkJS)
-        schemeHandler.loadRawResource(path: "markdown-renderer.js", content: markdownRendererJS)
-
-        // Read markdown from stdin and synthesize A2UI JSONL on a background thread
-        readMarkdownFromStdin()
-
-        // Navigate to the renderer
-        webView.load(URLRequest(url: URL(string: "agent://host/index.html")!))
     }
 
     func readA2UIFromStdin() {
-        DispatchQueue.global(qos: .userInitiated).async {
-            var lines: [String] = []
-            while let line = readLine() {
-                let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-                if trimmed.isEmpty { continue }
-                lines.append(trimmed)
-            }
-            let jsonArray = "[" + lines.joined(separator: ",") + "]"
-            DispatchQueue.main.async { [weak self] in
-                guard let self = self else { return }
-                self.pendingA2UIPayload = jsonArray
-                self.flushA2UIIfReady()
-            }
+        // Read all A2UI JSONL from stdin
+        var lines: [String] = []
+        while let line = readLine() {
+            lines.append(line)
         }
+        let jsonl = "[" + lines.joined(separator: ",") + "]"
+        pendingA2UIPayload = jsonl
     }
 
     func readMarkdownFromStdin() {
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            var markdownContent = ""
-            while let line = readLine() {
-                markdownContent += line + "\n"
-            }
-
-            // Check if markdown is empty
-            if markdownContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                DispatchQueue.main.async { [weak self] in
-                    self?.emitAndExit(status: "error", message: "no markdown provided on stdin", code: 3)
-                }
-                return
-            }
-
-            // Synthesize minimal A2UI JSONL
-            guard let self = self else { return }
-            let a2uiPayload = self.synthesizeMarkdownA2UI(markdown: markdownContent)
-
-            DispatchQueue.main.async { [weak self] in
-                guard let self = self else { return }
-                self.pendingA2UIPayload = a2uiPayload
-                self.flushA2UIIfReady()
-            }
+        // Read markdown from stdin
+        var lines: [String] = []
+        while let line = readLine() {
+            lines.append(line)
         }
+        let markdown = lines.joined(separator: "\n")
+
+        // Synthesize A2UI
+        let payload = synthesizeMarkdownA2UI(markdown: markdown)
+        pendingA2UIPayload = payload
+
+        // Inject A2UI renderer + micromark + markdown renderer into blank page
+        let html = """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <style>
+                * { margin: 0; padding: 0; box-sizing: border-box; }
+                body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 20px; background: white; color: #333; }
+                #a2ui-root { max-width: 900px; margin: 0 auto; }
+                .a2ui-column { display: flex; flex-direction: column; gap: 16px; }
+                .a2ui-row { display: flex; flex-direction: row; gap: 16px; align-items: flex-start; }
+                .a2ui-row.center { align-items: center; }
+                .a2ui-row.space-between { justify-content: space-between; }
+                .a2ui-card { border: 1px solid #ddd; border-radius: 8px; padding: 16px; background: #fafafa; }
+                .a2ui-text { line-height: 1.5; }
+                .a2ui-text.secondary { color: #666; font-size: 0.9em; }
+                .a2ui-text.muted { color: #999; font-size: 0.85em; }
+                .a2ui-label { display: block; font-weight: 500; margin-bottom: 6px; font-size: 0.9em; }
+                .a2ui-input, .a2ui-textarea { border: 1px solid #ccc; border-radius: 4px; padding: 8px; font-family: inherit; font-size: 1em; width: 100%; }
+                .a2ui-textarea { resize: vertical; min-height: 100px; }
+                .a2ui-input:focus, .a2ui-textarea:focus { outline: none; border-color: #0066cc; box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.1); }
+                .a2ui-select { border: 1px solid #ccc; border-radius: 4px; padding: 8px; font-family: inherit; font-size: 1em; width: 100%; }
+                .a2ui-select:focus { outline: none; border-color: #0066cc; box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.1); }
+                .a2ui-checkbox { display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
+                .a2ui-checkbox input { cursor: pointer; }
+                .a2ui-button { padding: 10px 16px; border: 1px solid #ccc; border-radius: 4px; background: white; color: black; cursor: pointer; font-size: 1em; font-weight: 500; }
+                .a2ui-button.primary { background: #0066cc; color: white; border-color: #0066cc; }
+                .a2ui-button.primary:hover { background: #0052a3; }
+                .a2ui-button:hover:not(.primary) { background: #f0f0f0; }
+                .a2ui-button:active { opacity: 0.8; }
+                .a2ui-divider { border: none; border-top: 1px solid #ddd; margin: 20px 0; }
+                .a2ui-image { max-width: 100%; height: auto; border-radius: 4px; }
+                .a2ui-markdown-doc { display: flex; flex-direction: column; gap: 12px; }
+                .a2ui-markdown-doc--with-comments { display: grid; grid-template-columns: 1fr 300px; gap: 16px; }
+                .a2ui-markdown-doc-title { font-size: 1.3em; font-weight: 600; margin-bottom: 8px; }
+                .a2ui-markdown-tabs { display: flex; gap: 0; border-bottom: 1px solid #ddd; }
+                .a2ui-markdown-tab { padding: 8px 12px; background: #f0f0f0; border: none; cursor: pointer; font-weight: 500; color: #666; }
+                .a2ui-markdown-tab--active { background: white; border-bottom: 2px solid #0066cc; color: #0066cc; }
+                .a2ui-markdown-tab:hover { background: #e8e8e8; }
+                .a2ui-markdown-preview { padding: 16px; background: white; border: 1px solid #ddd; border-radius: 4px; line-height: 1.6; }
+                .a2ui-markdown-preview h1 { font-size: 1.8em; font-weight: 600; margin: 16px 0 8px 0; }
+                .a2ui-markdown-preview h2 { font-size: 1.5em; font-weight: 600; margin: 14px 0 8px 0; }
+                .a2ui-markdown-preview h3 { font-size: 1.2em; font-weight: 600; margin: 12px 0 6px 0; }
+                .a2ui-markdown-preview p { margin-bottom: 12px; }
+                .a2ui-markdown-preview code { background: #f4f4f4; padding: 2px 6px; border-radius: 3px; font-family: monospace; font-size: 0.9em; }
+                .a2ui-markdown-preview pre { background: #f4f4f4; padding: 12px; border-radius: 4px; overflow-x: auto; margin-bottom: 12px; }
+                .a2ui-markdown-preview pre code { background: none; padding: 0; }
+                .a2ui-markdown-preview blockquote { border-left: 3px solid #ddd; padding-left: 12px; margin: 12px 0; color: #666; }
+                .a2ui-markdown-preview ul, .a2ui-markdown-preview ol { margin-left: 20px; margin-bottom: 12px; }
+                .a2ui-markdown-preview li { margin-bottom: 4px; }
+                .a2ui-markdown-preview a { color: #0066cc; text-decoration: none; }
+                .a2ui-markdown-preview a:hover { text-decoration: underline; }
+                .a2ui-markdown-source { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 4px; font-family: monospace; font-size: 0.9em; line-height: 1.5; }
+                .a2ui-markdown-source:focus { outline: none; border-color: #0066cc; box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.1); }
+                .a2ui-markdown-comments-pane { border-left: 1px solid #ddd; padding-left: 12px; overflow-y: auto; max-height: 500px; }
+                .a2ui-markdown-comments-list { display: flex; flex-direction: column; gap: 8px; }
+                .a2ui-markdown-comments-empty { color: #999; font-size: 0.85em; text-align: center; padding: 16px 8px; }
+                .a2ui-markdown-composer { background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; padding: 8px; margin-bottom: 8px; }
+                .a2ui-markdown-composer-quote { font-size: 0.85em; color: #666; margin-bottom: 6px; font-style: italic; }
+                .a2ui-markdown-composer-body { width: 100%; padding: 6px; border: 1px solid #ccc; border-radius: 3px; font-family: inherit; font-size: 0.9em; min-height: 60px; margin-bottom: 6px; }
+                .a2ui-markdown-composer-body:focus { outline: none; border-color: #0066cc; box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.1); }
+                .a2ui-markdown-composer-actions { display: flex; gap: 6px; justify-content: flex-end; }
+                .a2ui-markdown-composer-actions button { padding: 4px 10px; font-size: 0.85em; }
+                .a2ui-markdown-comment { background: #e3f2fd; border: 1px solid #90caf9; border-radius: 4px; padding: 8px; margin-bottom: 8px; cursor: pointer; }
+                .a2ui-markdown-comment:hover { background: #bbdefb; }
+                .a2ui-markdown-comment-quote { font-size: 0.8em; color: #666; margin-bottom: 4px; font-style: italic; }
+                .a2ui-markdown-comment-body { font-size: 0.9em; color: #333; }
+                .a2ui-markdown-anchor-highlight { background-color: #ffffcc; }
+                .a2ui-markdown-doc-comment { padding: 12px; background: #f9f9f9; border: 1px solid #ddd; border-radius: 4px; }
+                .a2ui-markdown-doc-comment-label { display: block; font-weight: 500; font-size: 0.8em; margin-bottom: 6px; color: #666; }
+                .a2ui-markdown-doc-comment-body { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 3px; font-family: inherit; font-size: 0.9em; }
+                .a2ui-markdown-doc-comment-body:focus { outline: none; border-color: #0066cc; box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.1); }
+            </style>
+        </head>
+        <body>
+            <div id="a2ui-root"></div>
+            <script id="micromark"></script>
+            <script id="markdown-renderer"></script>
+            <script id="a2ui-renderer"></script>
+            <script>
+                // Inject the scripts
+                document.getElementById('micromark').textContent = \(micromarkJS.split("let micromarkJS = #")[1].split("let markdownRendererJS")[0].trimmingCharacters(in: .whitespaces).dropFirst(4).dropLast(4));
+                document.getElementById('markdown-renderer').textContent = \(markdownRendererJS.split("let markdownRendererJS = #")[1].split("// MARK:")[0].trimmingCharacters(in: .whitespaces).dropFirst(4).dropLast(4));
+                document.getElementById('a2ui-renderer').textContent = `\(a2uiRendererJS)`;
+            </script>
+        </body>
+        </html>
+        """
+
+        webView.loadHTMLString(html, baseURL: nil)
     }
 
     func synthesizeMarkdownA2UI(markdown: String) -> String {
@@ -553,15 +449,22 @@ class AppCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NS
         emitAndExit(status: "cancelled", code: 1)
     }
 
-    func handleTimeout() {
-        emitAndExit(status: "timeout", code: 2)
-    }
+    // MARK: - Emission and Exit
 
-    func emitAndExit(status: String, data: Any? = nil, message: String? = nil, code: Int32) {
-        guard !hasEmitted else { return }
-        hasEmitted = true
-        timeoutTimer?.invalidate()
-        emitResult(status: status, data: data, message: message)
+    func emitAndExit(status: String, data: Any? = nil, message: String? = nil, code: Int32 = 0) {
+        var output: [String: Any] = ["status": status]
+
+        if let data = data {
+            output["data"] = data
+        } else if let message = message {
+            output["message"] = message
+        }
+
+        if let jsonData = try? JSONSerialization.data(withJSONObject: output),
+           let jsonString = String(data: jsonData, encoding: .utf8) {
+            print(jsonString)
+        }
+
         exit(code)
     }
 }
@@ -573,179 +476,72 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     init(coordinator: AppCoordinator) {
         self.coordinator = coordinator
-        super.init()
     }
 
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        coordinator.run()
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        return true
     }
-
-    func applicationWillTerminate(_ notification: Notification) {
-        if !coordinator.hasEmitted {
-            coordinator.hasEmitted = true
-            emitResult(status: "cancelled")
-        }
-    }
-
-    func applicationShouldTerminateAfterLastWindowClosed(_ app: NSApplication) -> Bool { false }
 }
 
-// MARK: - Escape Key Handler
+// MARK: - Key Event Monitor
 
-class KeyEventMonitor {
+class KeyEventMonitor: NSObject {
+    var coordinator: AppCoordinator
     var monitor: Any?
-    weak var coordinator: AppCoordinator?
 
     init(coordinator: AppCoordinator) {
         self.coordinator = coordinator
+        super.init()
+
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            if event.keyCode == 53 {
-                self?.coordinator?.emitAndExit(status: "cancelled", code: 1)
+            guard let self = self else { return event }
+
+            // Cmd+W or Cmd+Q: close/quit
+            if (event.modifierFlags.contains(.command)) {
+                if event.keyCode == 13 { // Cmd+W
+                    self.coordinator.window.close()
+                    return nil
+                } else if event.keyCode == 12 { // Cmd+Q
+                    NSApplication.shared.terminate(self)
+                    return nil
+                }
+            }
+
+            // Esc: close window
+            if event.keyCode == 53 { // Escape
+                self.coordinator.window.close()
                 return nil
             }
+
             return event
         }
     }
-    deinit { if let m = monitor { NSEvent.removeMonitor(m) } }
 }
 
-// MARK: - Embedded A2UI Renderer
+// MARK: - Custom Scheme Handler
 
-let a2uiRendererHTML = """
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>A2UI</title>
-<link rel="stylesheet" href="agent://host/styles.css">
-</head>
-<body>
-<div id="a2ui-root"></div>
-<script src="agent://host/renderer.js"></script>
-</body>
-</html>
-"""
+class CustomSchemeHandler: NSObject, WKURLSchemeHandler {
+    var resources: [String: String] = [:]
 
-let a2uiRendererCSS = """
-:root {
-  --bg: #1c1c1e;
-  --surface: #2c2c2e;
-  --surface-2: #3a3a3c;
-  --text: #f2f2f7;
-  --muted: #8e8e93;
-  --accent: #0a84ff;
-  --danger: #ff453a;
-  --success: #32d74b;
-  --border: rgba(255,255,255,0.08);
-  --radius: 10px;
-  color-scheme: dark;
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", ui-sans-serif, system-ui, sans-serif;
-  font-size: 14px;
+    func loadResources(_ resources: [String: String]) {
+        self.resources = resources
+    }
+
+    func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
+        let path = urlSchemeTask.request.url?.path ?? ""
+
+        if let content = resources[path], let data = content.data(using: .utf8) {
+            let response = URLResponse(url: urlSchemeTask.request.url!, mimeType: "text/html", expectedContentLength: data.count, textEncodingName: "utf-8")
+            urlSchemeTask.didReceive(response)
+            urlSchemeTask.didReceive(data)
+            urlSchemeTask.didFinish()
+        } else {
+            urlSchemeTask.didFailWithError(NSError(domain: "CustomScheme", code: 404, userInfo: nil))
+        }
+    }
+
+    func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {}
 }
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body {
-  background: var(--bg); color: var(--text);
-  min-height: 100vh; padding: 1.25rem;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-.a2ui-column { display: flex; flex-direction: column; gap: 0.75rem; }
-.a2ui-row { display: flex; flex-direction: row; gap: 0.75rem; align-items: center; flex-wrap: wrap; }
-.a2ui-row.space-between { justify-content: space-between; }
-.a2ui-row.center { justify-content: center; }
-.a2ui-row.end { justify-content: flex-end; }
-.a2ui-card {
-  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
-  padding: 1.5rem;
-}
-.a2ui-text { line-height: 1.5; letter-spacing: -0.01em; white-space: pre-wrap; }
-.a2ui-text.h1 { font-size: 1.75rem; font-weight: 700; letter-spacing: -0.02em; }
-.a2ui-text.h2 { font-size: 1.35rem; font-weight: 600; letter-spacing: -0.02em; }
-.a2ui-text.h3 { font-size: 1.05rem; font-weight: 600; letter-spacing: -0.01em; }
-.a2ui-text.subtitle { color: var(--muted); font-size: 0.9rem; }
-.a2ui-text.body { color: var(--text); }
-.a2ui-text.caption { color: var(--muted); font-size: 0.8rem; line-height: 1.45; }
-.a2ui-input, .a2ui-textarea, .a2ui-select {
-  width: 100%; padding: 0.6rem 0.75rem;
-  border: 1px solid var(--border); border-radius: 7px;
-  background: var(--bg); color: var(--text);
-  font: inherit; font-size: 0.925rem;
-  transition: border-color 0.12s, background 0.12s;
-}
-.a2ui-input::placeholder, .a2ui-textarea::placeholder { color: var(--muted); }
-.a2ui-input:focus, .a2ui-textarea:focus, .a2ui-select:focus {
-  outline: none; border-color: var(--accent);
-}
-.a2ui-textarea { resize: vertical; min-height: 80px; line-height: 1.5; }
-.a2ui-label { font-size: 0.8rem; color: var(--muted); margin-bottom: -0.35rem; font-weight: 500; }
-.a2ui-button {
-  padding: 0.55rem 1.1rem; border: 1px solid transparent; border-radius: 7px;
-  font: inherit; font-size: 0.9rem; font-weight: 600; cursor: pointer;
-  transition: filter 0.12s, transform 0.08s;
-}
-.a2ui-button:hover { filter: brightness(1.1); }
-.a2ui-button:active { transform: scale(0.97); }
-.a2ui-button.primary { background: var(--accent); color: #fff; }
-.a2ui-button.secondary { background: var(--surface-2); color: var(--text); }
-.a2ui-button.danger { background: var(--danger); color: #fff; }
-.a2ui-button.success { background: var(--success); color: #1a1a1c; }
-.a2ui-divider { border: none; border-top: 1px solid var(--border); margin: 0.25rem 0; }
-.a2ui-select { appearance: none; background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%238e8e93' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 0.75rem center; padding-right: 2rem; }
-.a2ui-select option { background: var(--bg); color: var(--text); }
-.a2ui-checkbox { display: flex; align-items: center; gap: 0.5rem; padding: 0.3rem 0; cursor: pointer; }
-.a2ui-checkbox input { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
-.a2ui-checkbox span { font-size: 0.925rem; }
-.a2ui-image { max-width: 100%; height: auto; border-radius: 8px; display: block; }
-.a2ui-markdown-doc { display: flex; flex-direction: column; gap: 1rem; }
-.a2ui-markdown-doc-title { font-size: 1.05rem; font-weight: 600; letter-spacing: -0.01em; color: var(--text); }
-.a2ui-markdown-preview { line-height: 1.6; color: var(--text); }
-.a2ui-markdown-preview h1, .a2ui-markdown-preview h2, .a2ui-markdown-preview h3, .a2ui-markdown-preview h4, .a2ui-markdown-preview h5, .a2ui-markdown-preview h6 { margin-top: 0.5rem; margin-bottom: 0.5rem; font-weight: 600; }
-.a2ui-markdown-preview h1 { font-size: 1.75rem; }
-.a2ui-markdown-preview h2 { font-size: 1.35rem; }
-.a2ui-markdown-preview h3 { font-size: 1.05rem; }
-.a2ui-markdown-preview p { margin-bottom: 0.5rem; }
-.a2ui-markdown-preview code { background: var(--surface-2); padding: 0.2rem 0.4rem; border-radius: 3px; font-family: 'Monaco', 'Menlo', 'Courier New', monospace; font-size: 0.9em; }
-.a2ui-markdown-preview pre { background: var(--surface-2); padding: 1rem; border-radius: 6px; overflow-x: auto; margin-bottom: 0.5rem; }
-.a2ui-markdown-preview pre code { background: transparent; padding: 0; }
-.a2ui-markdown-preview blockquote { border-left: 3px solid var(--accent); padding-left: 1rem; color: var(--muted); margin-left: 0; margin-bottom: 0.5rem; }
-.a2ui-markdown-preview ul, .a2ui-markdown-preview ol { margin-left: 1.5rem; margin-bottom: 0.5rem; }
-.a2ui-markdown-preview li { margin-bottom: 0.25rem; }
-.a2ui-markdown-preview a { color: var(--accent); text-decoration: none; }
-.a2ui-markdown-preview a:hover { text-decoration: underline; }
-.a2ui-markdown-preview hr { border: none; border-top: 1px solid var(--border); margin: 1rem 0; }
-.a2ui-markdown-doc--with-comments { display: grid; grid-template-columns: 1fr 220px; gap: 12px; }
-.a2ui-markdown-comments-pane { padding: 8px 10px; border-left: 1px solid rgba(255,255,255,0.08); }
-.a2ui-markdown-comments-pane h5 { margin: 0 0 8px 0; font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: 0.5px; }
-.a2ui-markdown-comments-list:empty + .a2ui-markdown-comments-empty { display: block; }
-.a2ui-markdown-comments-list:not(:empty) + .a2ui-markdown-comments-empty { display: none; }
-.a2ui-markdown-comments-empty { font-size: 11px; color: #666; font-style: italic; padding: 6px 0; }
-.a2ui-markdown-composer { background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; padding: 8px; margin-bottom: 8px; }
-.a2ui-markdown-composer-quote { font-size: 10px; color: var(--muted); font-style: italic; margin-bottom: 6px; line-height: 1.4; word-break: break-word; }
-.a2ui-markdown-composer-body { width: 100%; padding: 6px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg); color: var(--text); font: 11px Monaco, monospace; resize: vertical; min-height: 60px; margin-bottom: 6px; }
-.a2ui-markdown-composer-body:focus { outline: none; border-color: var(--accent); }
-.a2ui-markdown-composer-actions { display: flex; gap: 6px; justify-content: flex-end; }
-.a2ui-markdown-composer-actions button { padding: 4px 12px; font-size: 10px; border: 1px solid var(--border); border-radius: 5px; background: var(--surface); color: var(--text); cursor: pointer; transition: filter 0.12s; }
-.a2ui-markdown-composer-actions button:hover { filter: brightness(1.15); }
-.a2ui-markdown-composer-actions button.save { background: var(--success); color: #1a1a1c; }
-.a2ui-markdown-composer-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
-.a2ui-markdown-comment { background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; padding: 8px; margin-bottom: 8px; }
-.a2ui-markdown-comment-quote { font-size: 10px; color: var(--muted); font-style: italic; margin-bottom: 4px; line-height: 1.4; }
-.a2ui-markdown-comment-body { font-size: 11px; color: var(--text); line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
-.a2ui-markdown-preview [data-has-comment] { position: relative; background: rgba(255,193,7,0.08); border-left: 2px solid #ffc107; padding-left: 6px; }
-.a2ui-markdown-preview [data-has-comment]::after { content: "💬"; position: absolute; right: -22px; top: 0; font-size: 12px; }
-.a2ui-markdown-preview .a2ui-markdown-anchor-highlight { transition: background-color 1.2s ease-out; background: rgba(255,236,120,0.35) !important; }
-.a2ui-markdown-doc-comment { grid-column: 1 / -1; border-top: 1px solid var(--border); padding: 8px 0; margin-top: 8px; }
-.a2ui-markdown-doc-comment-label { display: block; font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
-.a2ui-markdown-doc-comment-body { width: 100%; padding: 6px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg); color: var(--text); font: 11px Monaco, monospace; resize: vertical; min-height: 48px; }
-.a2ui-markdown-doc-comment-body:focus { outline: none; border-color: var(--accent); }
-.a2ui-markdown-tabs { display: flex; gap: 4px; margin-bottom: 8px; border-bottom: 1px solid var(--border); grid-column: 1 / -1; }
-.a2ui-markdown-tab { padding: 4px 12px; font-size: 11px; background: transparent; border: none; border-bottom: 2px solid transparent; color: var(--muted); cursor: pointer; transition: color 0.12s, border-color 0.12s; }
-.a2ui-markdown-tab:hover { color: var(--text); }
-.a2ui-markdown-tab--active { color: var(--text); border-bottom-color: var(--accent); font-weight: 500; }
-.a2ui-markdown-source { width: 100%; min-height: 240px; padding: 8px; font: 12px/1.5 Monaco, monospace; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 5px; resize: vertical; grid-column: 1 / -1; }
-.a2ui-markdown-source:focus { outline: none; border-color: var(--accent); }
-"""
 
 let a2uiRendererJS = """
 // Minimal A2UI v0.8 renderer — supports: Text, TextInput, Button, Column, Row, Card, Select, Checkbox, RadioGroup, Image, Divider, MarkdownDoc
@@ -780,7 +576,29 @@ let a2uiRendererJS = """
       const name = el.dataset.a2uiField;
       if (el.type === 'checkbox') data[name] = el.checked;
       else if (el.type === 'radio') { if (el.checked) data[name] = el.value; }
-      else if (el.dataset.a2uiMarkdownDocField) { data[name] = { action: 'acknowledge' }; }
+      else if (el.dataset.a2uiMarkdownDocField) {
+        // Find the wrapper and build the structured payload
+        const wrapper = el.closest('.a2ui-markdown-doc');
+        if (!wrapper) {
+          data[name] = { action: 'acknowledge' };
+        } else {
+          const hasComments = wrapper._allowComments === true;
+          const hasEdits = wrapper._allowEdits === true;
+          const payload = {};
+          if (hasComments) {
+            payload.comments = wrapper._mdComments || [];
+            payload.doc_comment = wrapper._mdDocComment || '';
+          }
+          if (hasEdits) {
+            payload.edited_text = wrapper._mdEditedText || '';
+            payload.modified = !!wrapper._mdModified;
+          }
+          if (!hasComments && !hasEdits) {
+            payload.action = 'acknowledge';
+          }
+          data[name] = payload;
+        }
+      }
       else data[name] = el.value;
     });
     return data;
@@ -986,7 +804,9 @@ let a2uiRendererJS = """
     marker.style.display = 'none';
     wrapper.appendChild(marker);
 
-
+    // Store allow flags for form data collection
+    wrapper._allowComments = props.allowComments === true;
+    wrapper._allowEdits = props.allowEdits === true;
     // Initialize doc comment state
     wrapper._mdDocComment = '';
     // Add title if provided
@@ -1004,17 +824,17 @@ let a2uiRendererJS = """
     if (props.allowEdits === true) {
       tabBar = document.createElement('div');
       tabBar.className = 'a2ui-markdown-tabs';
-      
+
       previewTab = document.createElement('button');
       previewTab.className = 'a2ui-markdown-tab a2ui-markdown-tab--active';
       previewTab.dataset.tab = 'preview';
       previewTab.textContent = 'Preview';
-      
+
       sourceTab = document.createElement('button');
       sourceTab.className = 'a2ui-markdown-tab';
       sourceTab.dataset.tab = 'source';
       sourceTab.textContent = 'Source';
-      
+
       tabBar.appendChild(previewTab);
       tabBar.appendChild(sourceTab);
       wrapper.appendChild(tabBar);
@@ -1080,7 +900,7 @@ let a2uiRendererJS = """
       sourceTextarea.setAttribute('hidden', '');
       sourceTextarea.value = text;
       wrapper.appendChild(sourceTextarea);
-      
+
       // Tab switching handler
       const switchTab = (tabName) => {
         if (tabName === 'preview') {
@@ -1103,7 +923,7 @@ let a2uiRendererJS = """
           }
         }
       };
-      
+
       // Tab button click handlers
       if (previewTab) {
         previewTab.addEventListener('click', (e) => {
@@ -1117,7 +937,7 @@ let a2uiRendererJS = """
           switchTab('source');
         });
       }
-      
+
       // Keyboard shortcut: Cmd+/ or Ctrl+/
       wrapper.addEventListener('keydown', (e) => {
         if ((e.metaKey || e.ctrlKey) && e.key === '/') {
@@ -1305,6 +1125,37 @@ let a2uiRendererJS = """
     // Signal ready
     if (window.webkit?.messageHandlers?.ready) {
       window.webkit.messageHandlers.ready.postMessage({});
+    }
+    // Setup window-wide Cmd+Enter handler for submit button
+    setupWindowKeyboardHandlers();
+  }
+
+  function setupWindowKeyboardHandlers() {
+    // Remove any previous handler to avoid duplicates
+    document.removeEventListener('keydown', windowKeydownHandler);
+    // Add the new handler
+    document.addEventListener('keydown', windowKeydownHandler);
+  }
+
+  function windowKeydownHandler(e) {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      // Only fire if NOT inside a textarea/input (except the composer textarea has its own handler)
+      const activeElement = document.activeElement;
+      if (activeElement && (activeElement.tagName === 'TEXTAREA' || activeElement.tagName === 'INPUT')) {
+        // Check if this is the composer textarea
+        if (activeElement.classList.contains('a2ui-markdown-composer-body')) {
+          // Let the composer's own handler deal with it
+          return;
+        }
+        // It's some other textarea/input, don't fire the window handler
+        return;
+      }
+      e.preventDefault();
+      // Find and click the primary button
+      const primaryBtn = document.querySelector('.a2ui-button.primary');
+      if (primaryBtn) {
+        primaryBtn.click();
+      }
     }
   }
 
