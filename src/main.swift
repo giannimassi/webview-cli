@@ -1080,8 +1080,7 @@ let a2uiRendererJS = """
           el.selectionStart = el.selectionEnd = s + 2;
         } else {
           // Shift+Tab: outdent 2 spaces if the line's start has them
-          const lineStart = v.lastIndexOf('
-', s - 1) + 1;
+          const lineStart = v.lastIndexOf('\\n', s - 1) + 1;
           if (v.slice(lineStart, lineStart + 2) === '  ') {
             el.value = v.slice(0, lineStart) + v.slice(lineStart + 2);
             const shift = s >= lineStart + 2 ? 2 : (s - lineStart);
@@ -1172,7 +1171,7 @@ let a2uiRendererJS = """
 
         const startLine = parseInt(block.dataset.srcStart, 10);
         const endLine = parseInt(block.dataset.srcEnd, 10);
-        let quoted = block.textContent.trim().split('\n')[0];
+        let quoted = block.textContent.trim().split('\\n')[0];
         if (quoted.length > 200) quoted = quoted.slice(0, 200);
 
         // Remove existing composer if any
