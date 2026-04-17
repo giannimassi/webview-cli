@@ -94,6 +94,17 @@ Use for: showing a diff, plan summary, test output for review before proceeding.
 {"beginRendering": {"root": "root"}}
 ```
 
+**Response shape:**
+```json
+{"status":"completed","data":{"action":"proceed","data":{},"context":{}}}
+```
+or
+```json
+{"status":"completed","data":{"action":"back","data":{},"context":{}}}
+```
+
+(`data.data` is empty because this template has no `fieldName` inputs — it's an acknowledgement-only flow.)
+
 ## Template variables guide
 
 When substituting into templates:

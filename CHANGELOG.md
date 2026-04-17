@@ -2,6 +2,24 @@
 
 All notable changes to webview-cli. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.3] — 2026-04-17
+
+Council-review cleanup of the `/webview` Claude Code skill. No binary changes.
+
+### Fixed
+- **Mode 3 (custom HTML) example was broken** — missing `--url` flag; invocation would exit with usage error. Also replaced the chained `(cmd; cat) | webview-cli` pattern with two-step (write load command to temp file, then invoke with stdin redirect).
+- **SKILL.md catalog was missing 3 supported components** — `Checkbox`, `RadioGroup`, `Image` now documented with their key props.
+- **Template 4 (confirmation with content preview) had no response-shape example** — added both `proceed` and `back` response variants.
+- **Preflight was personal-machine-specific** — removed the `~/dev/fun/webview-cli` build-from-source fallback; preflight now recommends `brew install` on missing binary and explicitly checks `uname -s` for macOS.
+
+### Changed
+- **Bash-tool timeout formula is now deterministic**: `bash_timeout_ms = (webview_timeout_sec + 30) × 1000`. Previously "generously". Noted the 600s Bash-tool cap (max webview timeout 540s).
+- **Added a canonical Response Format Reference section** to SKILL.md covering all 4 status variants (`completed` / `cancelled` / `timeout` / `error`) and the `context` field.
+- **Lifted JSONL escaping rules** (backslash, quotes, newlines) into SKILL.md as a visible callout — was previously buried in templates.md.
+- **Workflow step 9 now warns to sanitize form data** before passing to Bash commands (shell-escape, validate format).
+- **Trigger description narrowed** — dropped "confirm" (over-matched every `rm -rf` prompt) and "show UI" (too generic). Now specifies "multi-field", "5+ choices", "approval with context", "content review". Skip rule for CI/non-interactive made explicit.
+- **"When to use" table clarified** the backward `>30s of thinking` heuristic — now "agent-side computation taking >30s before UI can render".
+
 ## [0.1.2] — 2026-04-17
 
 ### Added
