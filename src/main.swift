@@ -13,6 +13,10 @@ struct Config {
     var x: Int? = nil  // nil = center on screen
     var y: Int? = nil
     var screen: Int = 0  // NSScreen index; 0 = main
+    var markdownMode: Bool = false
+    var comments: Bool = false
+    var edits: Bool = false
+    var allowHtml: Bool = false
 }
 
 func parseArgs() -> Config? {
@@ -38,6 +42,14 @@ func parseArgs() -> Config? {
             config.timeout = Int(args[i]) ?? 0
         case "--a2ui":
             config.a2ui = true
+        case "--markdown":
+            config.markdownMode = true
+        case "--comments":
+            config.comments = true
+        case "--edits":
+            config.edits = true
+        case "--allow-html":
+            config.allowHtml = true
         case "--x":
             i += 1; guard i < args.count else { return nil }
             config.x = Int(args[i])
@@ -58,14 +70,27 @@ func parseArgs() -> Config? {
         }
         i += 1
     }
+
+    // Validate mutual exclusion: --markdown incompatible with --a2ui or --url
+    if config.markdownMode {
+        if config.a2ui {
+            writeStderr("Error: --markdown and --a2ui are mutually exclusive")
+            return nil
+        }
+        if !config.url.isEmpty {
+            writeStderr("Error: --markdown and --url are mutually exclusive")
+            return nil
+        }
+    }
+
     // In a2ui mode, URL is optional (uses agent://host/index.html)
-    if !config.a2ui && config.url.isEmpty { return nil }
+    if !config.a2ui && !config.markdownMode && config.url.isEmpty { return nil }
     return config
 }
 
 func printUsage() {
     let usage = """
-    Usage: webview-cli [--url <url>] [--a2ui] [options]
+    Usage: webview-cli [--url <url>] [--a2ui] [--markdown] [options]
 
     Opens a native macOS webview. The page signals completion by calling:
       window.webkit.messageHandlers.complete.postMessage({...})
@@ -74,12 +99,17 @@ func printUsage() {
       --url <url>        Open a URL (http/https/file/agent)
       --a2ui             A2UI mode: reads A2UI JSONL from stdin, renders UI,
                          returns userAction on stdout
+      --markdown         Markdown editor mode: reads markdown from stdin, renders
+                         interactive editor with optional comments and edits
 
     Options:
       --title <title>    Window title (default: "webview-cli")
       --width <px>       Window width (default: 1024)
       --height <px>      Window height (default: 768)
       --timeout <sec>    Session timeout, 0=none (default: 0)
+      --comments         Enable comments in markdown mode
+      --edits            Enable edit tracking in markdown mode
+      --allow-html       Allow HTML in markdown mode
 
     Stdin protocol (when using agent:// URLs or --a2ui):
       {"type":"load","resources":{"path.html":"<base64>","app.js":"<base64>"}}
