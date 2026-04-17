@@ -31,6 +31,14 @@ jobs:
             echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
           fi
 
+      - name: Set up Node (for runtime JS smoke harness)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dev deps (jsdom for runtime smoke)
+        run: npm install --no-audit --no-fund --silent
+
       - name: Build
         run: make build
 

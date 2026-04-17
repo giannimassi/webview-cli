@@ -7,3 +7,4 @@
 .superpowers/
 *.tar.gz
 media/.DS_Store
+node_modules/

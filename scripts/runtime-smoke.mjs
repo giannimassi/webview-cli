@@ -10,7 +10,7 @@
 //      doesn't emit JS errors
 
 import { readFileSync } from "node:fs";
-import { JSDOM } from "/tmp/webview-cli-testenv/node_modules/jsdom/lib/api.js";
+import { JSDOM } from "jsdom";
 
 const SRC = "src/main.swift";
 const src = readFileSync(SRC, "utf8");

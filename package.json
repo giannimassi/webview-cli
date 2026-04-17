@@ -1,0 +1,10 @@
+{
+  "name": "webview-cli-dev",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Dev-only package manifest for webview-cli. Holds jsdom (used by scripts/runtime-smoke.mjs) and the minify/bundling tooling used once when updating embedded JS constants. The shipped binary has zero runtime Node dependencies.",
+  "license": "MIT",
+  "devDependencies": {
+    "jsdom": "^25.0.0"
+  }
+}
