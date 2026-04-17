@@ -1009,13 +1009,68 @@ let markdownRendererJS = #"""
     return blocks;
   }
 
+  // HTML sanitization: remove dangerous elements and attributes
+  function sanitizeMarkdownDOM(rootEl, options) {
+    options = options || {};
+    const allowHtml = options.allowHtml === true;
+
+    if (allowHtml) return; // Bypass sanitization if explicitly allowed
+
+    // Dangerous elements to remove entirely
+    const dangerousElements = ['script', 'iframe', 'object', 'embed', 'style', 'link', 'base', 'meta'];
+
+    // Recursively walk the DOM and sanitize
+    function walk(node) {
+      if (node.nodeType !== 1) return; // Only process element nodes
+
+      const tag = node.tagName.toLowerCase();
+
+      // Remove dangerous elements
+      if (dangerousElements.includes(tag)) {
+        node.remove();
+        return;
+      }
+
+      // Strip event handler attributes (on*)
+      const attrs = Array.from(node.attributes);
+      for (const attr of attrs) {
+        const name = attr.name.toLowerCase();
+        if (name.startsWith('on')) {
+          node.removeAttribute(attr.name);
+        }
+      }
+
+      // Sanitize URL attributes for dangerous schemes
+      const urlAttrs = ['href', 'src', 'formaction', 'srcdoc', 'xlink:href'];
+      for (const attrName of urlAttrs) {
+        const attrValue = node.getAttribute(attrName);
+        if (attrValue) {
+          const trimmed = attrValue.replace(/^\s+/, '').toLowerCase();
+          if (trimmed.startsWith('javascript:') ||
+              trimmed.startsWith('vbscript:') ||
+              (trimmed.startsWith('data:') && !trimmed.startsWith('data:image/'))) {
+            node.removeAttribute(attrName);
+          }
+        }
+      }
+
+      // Recurse to children
+      for (const child of Array.from(node.childNodes)) {
+        walk(child);
+      }
+    }
+
+    walk(rootEl);
+  }
+
   // Main entry point
-  window.renderMarkdown = function(source, containerEl) {
+  window.renderMarkdown = function(source, containerEl, options) {
     if (!window.micromark) {
       console.error('micromark not loaded');
       return;
     }
 
+    options = options || {};
     containerEl.innerHTML = '';
     const blocks = identifyBlocks(source);
 
@@ -1026,6 +1081,9 @@ let markdownRendererJS = #"""
         // Parse HTML and wrap each top-level element
         const temp = document.createElement('div');
         temp.innerHTML = html;
+
+        // Sanitize the rendered HTML (unless allowHtml is true)
+        sanitizeMarkdownDOM(temp, options);
 
         for (const el of temp.childNodes) {
           if (el.nodeType === 1) { // Element node
@@ -1051,6 +1109,9 @@ let markdownRendererJS = #"""
       }
     }
   };
+
+  // Expose sanitizer for testing
+  globalThis.sanitizeMarkdownDOM = sanitizeMarkdownDOM;
 })();
 """#
 
