@@ -2,6 +2,21 @@
 
 All notable changes to webview-cli. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## Unreleased
+
+### Added
+- `--markdown` CLI mode for rendering markdown with optional comment sidebar + edit tabs
+- `MarkdownDoc` A2UI component (`fieldName`, `text`, `allowComments`, `allowEdits`, `allowHtml`, `title` props)
+- `--comments` flag: paragraph-anchored inline comments + doc-level overall comment
+- `--edits` flag: Preview/Source tabs, tab-indent in source, modified tracking
+- `--allow-html` flag: opt-in escape from default HTML sanitization
+- Keyboard shortcuts: `Cmd+/` (toggle Preview/Source), `Cmd+Enter` (submit)
+- Embedded micromark@4 CommonMark parser as a self-contained esbuild IIFE
+- HTML sanitizer (strips `<script>`, `<iframe>`, handlers, `javascript:`/`data:` URLs; allow-list for image data URIs)
+
+### Changed
+- Binary size: 193KB → 260KB (markdown editor adds ~67KB)
+
 ## [0.1.3] — 2026-04-17
 
 Council-review cleanup of the `/webview` Claude Code skill. No binary changes.

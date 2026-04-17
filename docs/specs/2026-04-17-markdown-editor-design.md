@@ -307,8 +307,11 @@ Visual / manual:
 ## Open questions (to resolve in the plan phase)
 
 1. Whether inline code (`` `foo` ``) and code blocks need any syntax-highlight affordance in v1, or stay plain monospace (currently: plain)
+   **Resolution:** No syntax highlight in v1. Plain monospace for both inline code and code blocks. Revisit if users request syntax highlighting as a common pain point.
 2. Scroll-spy behavior: when you click a comment in the sidebar, should the rendered view scroll-and-highlight? (likely yes, nice-to-have)
+   **Resolution:** Implemented in T9 (click comment card → scroll anchored block into view + highlight). Not full scroll-spy with active-block indicator, but meets the use case.
 3. Behavior when `allowHtml=true` and user edits source to inject `<script>` — is the source view a trusted context? (likely: user edits are rendered in the preview with the same sanitization as the agent-provided markdown, unless `allowHtml` is on)
+   **Resolution:** Source edits are rendered through the same sanitization path. When `allowHtml=true`, user-injected scripts would render (that is the consented behavior of the flag). When `allowHtml=false` (default), even user edits are sanitized. This is a known behavior and is documented in the protocol.
 
 ## Roadmap adjacencies (not in scope for this spec)
 

@@ -2,6 +2,8 @@
 
 `webview-cli --a2ui` ships a minimal renderer for a subset of Google's [A2UI v0.8 standard catalog](https://a2ui.org/specification/v0.8-a2ui/). The subset covers the four agent-UI patterns the tool is optimized for: **approval, form, select, acknowledgement**.
 
+Additionally, `webview-cli` extends A2UI with a `MarkdownDoc` component for markdown review workflows.
+
 ## Supported components
 
 | Component | Key props | Notes |
@@ -17,6 +19,134 @@
 | `Image` | `url` (literal or dataRef), `alt`, `width`, `height` | Supports remote URLs and `agent://` scheme |
 | `Button` | `label.literalString`, `variant` (`primary` \| `secondary` \| `danger` \| `success`), `action.name`, `action.context` | Clicking fires the `complete` handler with collected form data |
 | `Divider` | — | Horizontal rule |
+| `MarkdownDoc` | `fieldName` (required), `text` (required), `allowComments` (bool), `allowEdits` (bool), `allowHtml` (bool), `title` (string) | Renders markdown with optional comment sidebar + edit tab. Composed value reflects enabled toggles (see props below). |
+
+## MarkdownDoc component
+
+### Purpose
+
+The `MarkdownDoc` component renders markdown content inside an A2UI form. It enables spec review workflows where the user reviews a generated markdown document, adds inline and document-level comments, optionally edits the source, and submits structured feedback.
+
+### Props
+
+| Prop | Type | Default | Required | Notes |
+|------|------|---------|----------|-------|
+| `fieldName` | string | — | yes | Key under which the review payload goes in form `data`. |
+| `text` | string | — | yes | The markdown content to render. |
+| `allowComments` | bool | false | no | Enable paragraph-level comments (inline + document-level comment field). |
+| `allowEdits` | bool | false | no | Enable source editor tab (Preview/Source tabs). |
+| `allowHtml` | bool | false | no | Disable HTML sanitization. Default strips `<script>`, `<iframe>`, event handlers, `javascript:` URLs. |
+| `title` | string | — | no | Optional subheading displayed above the document. |
+
+### Output shape
+
+When a button with `action.name="submit"` is clicked, the `MarkdownDoc` component contributes a field to the form's `data` object:
+
+```json
+{
+  "action": "submit",
+  "data": {
+    "<fieldName>": {
+      "comments": [...],
+      "doc_comment": "...",
+      "edited_text": "...",
+      "modified": bool
+    },
+    "<other-field>": "..."
+  }
+}
+```
+
+The `<fieldName>` value is an object whose shape depends on which toggles are enabled:
+
+| allowComments | allowEdits | Output |
+|---|---|---|
+| false | false | `{}` (empty object, no review payload) |
+| true | false | `{"comments": [...], "doc_comment": "..."}` |
+| false | true | `{"edited_text": "...", "modified": bool}` |
+| true | true | `{"comments": [...], "doc_comment": "...", "edited_text": "...", "modified": bool}` |
+
+**Field definitions:**
+
+- `comments`: array of comment objects. Each has `source_line_start` (int), `source_line_end` (int), `quoted_text` (string), `body` (string). Always present when `allowComments=true`. Empty array `[]` if no comments were added.
+- `doc_comment`: document-level comment (string). Always present when `allowComments=true`. Empty string `""` if left blank.
+- `edited_text`: full markdown source at submit time. Always present when `allowEdits=true`.
+- `modified`: boolean indicating whether the source differs from the input. Always present when `allowEdits=true`.
+
+### Example: mixed form with spec review
+
+```jsonl
+{"surfaceUpdate":{"components":[{"id":"root","component":{"Column":{"children":{"explicitList":["card"]}}}}]}}
+{"surfaceUpdate":{"components":[{"id":"card","component":{"Card":{"children":{"explicitList":["title","spec","rollout","btns"]}}}}]}}
+{"surfaceUpdate":{"components":[{"id":"title","component":{"Text":{"usageHint":"h2","text":{"literalString":"Review and approve"}}}}]}}
+{"surfaceUpdate":{"components":[{"id":"spec","component":{"MarkdownDoc":{"fieldName":"review","text":"# Deploy Plan\n\nPhase 1: 10% traffic.\n\nPhase 2: full rollout.","allowComments":true,"allowEdits":false}}}]}}
+{"surfaceUpdate":{"components":[{"id":"rollout","component":{"RadioGroup":{"label":{"literalString":"Proceed?"},"fieldName":"decision","options":[{"value":"approve","label":"Approve"},{"value":"reject","label":"Reject"}]}}}]}}
+{"surfaceUpdate":{"components":[{"id":"btns","component":{"Row":{"alignment":"end","children":{"explicitList":["cancel","submit"]}}}}]}}
+{"surfaceUpdate":{"components":[{"id":"cancel","component":{"Button":{"label":{"literalString":"Cancel"},"variant":"secondary","action":{"name":"cancel"}}}}]}}
+{"surfaceUpdate":{"components":[{"id":"submit","component":{"Button":{"label":{"literalString":"Submit"},"variant":"primary","action":{"name":"submit"}}}}]}}
+{"beginRendering":{"root":"root"}}
+```
+
+When the user clicks **Submit**, the response is:
+
+```json
+{
+  "status": "completed",
+  "data": {
+    "action": "submit",
+    "data": {
+      "review": {
+        "comments": [
+          {
+            "source_line_start": 3,
+            "source_line_end": 3,
+            "quoted_text": "Phase 1: 10% traffic.",
+            "body": "Is this a timed window or event-based?"
+          }
+        ],
+        "doc_comment": "Looks solid. Proceed."
+      },
+      "decision": "approve"
+    }
+  }
+}
+```
+
+The `review` key (the component's `fieldName`) contains the review payload, and `decision` holds the radio selection.
+
+### Interaction model
+
+**When `allowComments=false` and `allowEdits=false`:**
+- Read-only preview of rendered markdown.
+
+**When `allowComments=true` (and `allowEdits=false`):**
+- Rendered preview is clickable. Click any block to attach a paragraph-level comment.
+- Right sidebar shows comment composer and existing comments.
+- Document-level comment field at bottom.
+
+**When `allowEdits=true` (and `allowComments=false`):**
+- Two tabs: **Preview** (rendered) and **Source** (plain textarea).
+- `Cmd+/` toggles between tabs.
+- Tab-indent support in source editor.
+
+**When both are true:**
+- Preview tab includes comment pins and composer.
+- Source tab is plain editor.
+- Both reviews (comments + edited source) are captured and returned.
+
+### HTML sanitization
+
+By default, raw HTML embedded in the markdown is stripped:
+- `<script>`, `<iframe>`, `<object>`, `<embed>` elements removed
+- Event handler attributes removed
+- `javascript:` and `data:` URLs converted to safe placeholders
+- Image data URIs allowed (allow-listed)
+
+Set `allowHtml=true` to disable sanitization. When enabled and the user edits source (if `allowEdits=true`), edited content is rendered through the same sanitization path.
+
+### For more detail
+
+See [`docs/protocol.md#markdown-mode`](protocol.md#markdown-mode) for the complete markdown mode specification, including keyboard shortcuts, output shape matrix, and error handling.
 
 ## Message types
 
@@ -40,7 +170,7 @@ Every component with a `fieldName` prop contributes to the data payload when any
 }
 ```
 
-Checkbox values are booleans. Select and TextInput values are strings.
+Checkbox values are booleans. Select and TextInput values are strings. MarkdownDoc values are objects (see MarkdownDoc section above).
 
 ## Dynamic values
 
