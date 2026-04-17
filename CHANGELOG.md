@@ -2,20 +2,34 @@
 
 All notable changes to webview-cli. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## Unreleased
+## [0.2.0] — 2026-04-17
 
 ### Added
-- `--markdown` CLI mode for rendering markdown with optional comment sidebar + edit tabs
-- `MarkdownDoc` A2UI component (`fieldName`, `text`, `allowComments`, `allowEdits`, `allowHtml`, `title` props)
-- `--comments` flag: paragraph-anchored inline comments + doc-level overall comment
-- `--edits` flag: Preview/Source tabs, tab-indent in source, modified tracking
-- `--allow-html` flag: opt-in escape from default HTML sanitization
-- Keyboard shortcuts: `Cmd+/` (toggle Preview/Source), `Cmd+Enter` (submit)
-- Embedded micromark@4 CommonMark parser as a self-contained esbuild IIFE
-- HTML sanitizer (strips `<script>`, `<iframe>`, handlers, `javascript:`/`data:` URLs; allow-list for image data URIs)
+
+- **Markdown review/edit surface** via new `--markdown` CLI mode. Pipe markdown to stdin; a native window opens with a rendered preview, optional comment sidebar + edit tabs; structured JSON returns on stdout.
+- **`MarkdownDoc` A2UI component** (`fieldName`, `text`, `allowComments`, `allowEdits`, `allowHtml`, `title`) — composable inside any A2UI form.
+- **`--comments` flag**: click any paragraph/code block/heading to attach an inline comment; each carries `source_line_start`/`source_line_end`/`quoted_text`/`body`. Plus a doc-level "Overall comment" field.
+- **`--edits` flag**: Preview/Source tabs (`Cmd+/` to toggle), tab-indent in source textarea, `modified` flag in submit payload.
+- **`--allow-html` flag**: opt-in escape from default HTML sanitization.
+- **GFM tables** with proper styling (collapsed borders, header background, alternating rows).
+- **`action.copy`** prop on `Button`: clicking copies literal text to clipboard and flashes "Copied ✓". Composable with `action.name` so the agent can observe the copy.
+- **"📋 Copy source" button** in every MarkdownDoc toolbar — copies the current source (respects live edits).
+- **HTML sanitizer** strips `<script>`, `<iframe>`, `<object>`, `<embed>`, `<style>`, `<link>`, `<base>`, `<meta>`, all `on*` handlers, and `javascript:` / `vbscript:` / non-image `data:` URL schemes. `srcset` parsed per-candidate. Image `data:` URIs allow-listed to `png|jpeg|gif|webp|bmp|avif;base64,`.
+- **Edit menu wired** (`Cmd+C`/`V`/`X`/`A`/`Z`). Previously the `.accessory`-policy app had no `NSApp.mainMenu`, so those shortcuts had nowhere to route — native text selection/copy/paste is now fully functional.
+- **Keyboard shortcuts**: `Cmd+/` (toggle Preview/Source), `Cmd+Enter` (submit), `Esc` / `Cmd+W` (cancel).
+- **Embedded `marked@12`** as a self-contained UMD (full CommonMark + GFM, including tables). Source-position annotations preserved via `marked.lexer` + byte-offset→line mapping on each top-level token.
+- **Runtime JS smoke-test harness** (`scripts/runtime-smoke.mjs` via jsdom + `scripts/check-js-syntax.py` via `node --check`) runs in `make test`. Catches embedded-JS syntax and runtime bugs that `strings $BINARY | grep` never could.
 
 ### Changed
-- Binary size: 193KB → 260KB (markdown editor adds ~67KB)
+
+- **Binary size: 193KB → ~291KB**. The `193KB` number in the README and "193KB vs Electron's 50MB+" header have been updated accordingly. Story unchanged — still ~170× smaller than Electron.
+- **`--help` output** documents the new flags in a "Modes" and "Options" layout.
+
+### Fixed
+
+- HTML sanitizer: closed Unicode-whitespace bypass for `javascript:` schemes (`\u00A0javascript:...` now stripped); `data:image/svg+xml` blocked (was allowed, would execute scripts in certain contexts); extended URL-attr list to include `srcset`, `poster`, `action`, `usemap`, `background`.
+- Text selection: mouse-up that ended a selection drag no longer hijacks into opening a comment composer.
+- Code-block and table blocks: 💬 pin indicator was clipped by `overflow-x: auto`; now anchored inside those blocks.
 
 ## [0.1.3] — 2026-04-17
 

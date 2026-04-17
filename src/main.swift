@@ -932,15 +932,31 @@ let a2uiRendererJS = """
   function renderButton(props) {
     const el = document.createElement('button');
     el.className = 'a2ui-button ' + (props.variant || 'primary');
-    el.textContent = resolveValue(props.label);
+    const originalLabel = resolveValue(props.label);
+    el.textContent = originalLabel;
     el.addEventListener('click', () => {
-      const actionName = props.action?.name || props.action || 'click';
-      const formData = collectFormData();
-      window.webkit.messageHandlers.complete.postMessage({
-        action: actionName,
-        data: formData,
-        context: props.action?.context || {}
-      });
+      // action.copy: copy literal text to clipboard + flash 'Copied ✓'.
+      // Composable with a normal action.name — agent still gets the postMessage.
+      const toCopy = props.action?.copy;
+      if (toCopy && navigator.clipboard?.writeText) {
+        navigator.clipboard.writeText(toCopy).then(() => {
+          el.textContent = 'Copied ✓';
+          el.disabled = true;
+          setTimeout(() => { el.textContent = originalLabel; el.disabled = false; }, 1200);
+        }).catch(() => {
+          // clipboard write can fail if the page lacks focus; swallow and keep going
+        });
+      }
+      // Fire the normal action (form submission) unless this is copy-only (no name).
+      const actionName = props.action?.name || (typeof props.action === 'string' ? props.action : null);
+      if (actionName) {
+        const formData = collectFormData();
+        window.webkit.messageHandlers.complete.postMessage({
+          action: actionName,
+          data: formData,
+          context: props.action?.context || {}
+        });
+      }
     });
     return el;
   }
@@ -1055,28 +1071,57 @@ let a2uiRendererJS = """
       wrapper.appendChild(title);
     }
 
-    // Create tab bar when allowEdits is true
-    let tabBar = null;
+    // Create toolbar row. Always present (hosts Copy button), optionally includes tabs.
+    const tabBar = document.createElement('div');
+    tabBar.className = 'a2ui-markdown-tabs';
     let previewTab = null;
     let sourceTab = null;
     if (props.allowEdits === true) {
-      tabBar = document.createElement('div');
-      tabBar.className = 'a2ui-markdown-tabs';
-      
       previewTab = document.createElement('button');
       previewTab.className = 'a2ui-markdown-tab a2ui-markdown-tab--active';
       previewTab.dataset.tab = 'preview';
       previewTab.textContent = 'Preview';
-      
+
       sourceTab = document.createElement('button');
       sourceTab.className = 'a2ui-markdown-tab';
       sourceTab.dataset.tab = 'source';
       sourceTab.textContent = 'Source';
-      
+
       tabBar.appendChild(previewTab);
       tabBar.appendChild(sourceTab);
-      wrapper.appendChild(tabBar);
     }
+
+    // Right-aligned Copy-source button — always present, dynamically copies the current source.
+    const tbSpacer = document.createElement('div');
+    tbSpacer.style.flex = '1';
+    tabBar.appendChild(tbSpacer);
+
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'a2ui-markdown-tab';
+    copyBtn.type = 'button';
+    copyBtn.title = 'Copy the current markdown source to the clipboard';
+    const copyDefault = '📋 Copy source';
+    copyBtn.textContent = copyDefault;
+    copyBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      // Pull from _mdEditedText (kept live by the source textarea) falling back to the original.
+      const payload = (typeof wrapper._mdEditedText === 'string' && wrapper._mdEditedText.length > 0)
+        ? wrapper._mdEditedText
+        : (props.text || '');
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(payload).then(() => {
+          copyBtn.textContent = 'Copied ✓';
+          copyBtn.disabled = true;
+          setTimeout(() => { copyBtn.textContent = copyDefault; copyBtn.disabled = false; }, 1200);
+        }).catch(() => {
+          copyBtn.textContent = 'Copy failed';
+          setTimeout(() => { copyBtn.textContent = copyDefault; }, 1200);
+        });
+      }
+    });
+    tabBar.appendChild(copyBtn);
+
+    wrapper.appendChild(tabBar);
 
     // Create preview container
     const preview = document.createElement('div');

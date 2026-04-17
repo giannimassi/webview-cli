@@ -17,7 +17,7 @@ Additionally, `webview-cli` extends A2UI with a `MarkdownDoc` component for mark
 | `Checkbox` | `label.literalString`, `fieldName`, `checked` (bool) | Apple-blue accent |
 | `RadioGroup` | `label.literalString`, `fieldName`, `options` (array), `value` (initial selection) | Mutually exclusive; first option selected by default |
 | `Image` | `url` (literal or dataRef), `alt`, `width`, `height` | Supports remote URLs and `agent://` scheme |
-| `Button` | `label.literalString`, `variant` (`primary` \| `secondary` \| `danger` \| `success`), `action.name`, `action.context` | Clicking fires the `complete` handler with collected form data |
+| `Button` | `label.literalString`, `variant` (`primary` \| `secondary` \| `danger` \| `success`), `action.name`, `action.context`, `action.copy` | Clicking fires the `complete` handler with collected form data. `action.copy: "<text>"` additionally writes the literal text to the clipboard and briefly flashes "Copied ✓"; composable with `action.name` for agents that want to know the user copied. |
 | `Divider` | — | Horizontal rule |
 | `MarkdownDoc` | `fieldName` (required), `text` (required), `allowComments` (bool), `allowEdits` (bool), `allowHtml` (bool), `title` (string) | Renders markdown with optional comment sidebar + edit tab. Composed value reflects enabled toggles (see props below). |
 
