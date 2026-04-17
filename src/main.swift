@@ -780,7 +780,19 @@ let a2uiRendererJS = """
       const name = el.dataset.a2uiField;
       if (el.type === 'checkbox') data[name] = el.checked;
       else if (el.type === 'radio') { if (el.checked) data[name] = el.value; }
-      else if (el.dataset.a2uiMarkdownDocField) { data[name] = { action: 'acknowledge' }; }
+      else if (el.dataset.a2uiMarkdownDocField) {
+        const wrapper = el.closest('.a2ui-markdown-doc');
+        if (!wrapper) { data[name] = { action: 'acknowledge' }; }
+        else {
+          const hasComments = wrapper._allowComments === true;
+          const hasEdits = wrapper._allowEdits === true;
+          const payload = {};
+          if (hasComments) { payload.comments = wrapper._mdComments || []; payload.doc_comment = wrapper._mdDocComment || ''; }
+          if (hasEdits) { payload.edited_text = wrapper._mdEditedText || ''; payload.modified = !!wrapper._mdModified; }
+          if (!hasComments && !hasEdits) { payload.action = 'acknowledge'; }
+          data[name] = payload;
+        }
+      }
       else data[name] = el.value;
     });
     return data;
@@ -987,6 +999,9 @@ let a2uiRendererJS = """
     wrapper.appendChild(marker);
 
 
+    // Store allow flags for form data collection
+    wrapper._allowComments = props.allowComments === true;
+    wrapper._allowEdits = props.allowEdits === true;
     // Initialize doc comment state
     wrapper._mdDocComment = '';
     // Add title if provided
@@ -1305,6 +1320,37 @@ let a2uiRendererJS = """
     // Signal ready
     if (window.webkit?.messageHandlers?.ready) {
       window.webkit.messageHandlers.ready.postMessage({});
+    }
+    // Setup window-wide Cmd+Enter handler for submit button
+    setupWindowKeyboardHandlers();
+  }
+
+  function setupWindowKeyboardHandlers() {
+    // Remove any previous handler to avoid duplicates
+    document.removeEventListener('keydown', windowKeydownHandler);
+    // Add the new handler
+    document.addEventListener('keydown', windowKeydownHandler);
+  }
+
+  function windowKeydownHandler(e) {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      // Only fire if NOT inside a textarea/input (except the composer textarea has its own handler)
+      const activeElement = document.activeElement;
+      if (activeElement && (activeElement.tagName === 'TEXTAREA' || activeElement.tagName === 'INPUT')) {
+        // Check if this is the composer textarea
+        if (activeElement.classList.contains('a2ui-markdown-composer-body')) {
+          // Let the composer's own handler deal with it
+          return;
+        }
+        // It's some other textarea/input, don't fire the window handler
+        return;
+      }
+      e.preventDefault();
+      // Find and click the primary button
+      const primaryBtn = document.querySelector('.a2ui-button.primary');
+      if (primaryBtn) {
+        primaryBtn.click();
+      }
     }
   }
 
