@@ -736,6 +736,15 @@ body {
 .a2ui-markdown-comment-body { font-size: 11px; color: var(--text); line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
 .a2ui-markdown-preview [data-has-comment] { position: relative; background: rgba(255,193,7,0.08); border-left: 2px solid #ffc107; padding-left: 6px; }
 .a2ui-markdown-preview [data-has-comment]::after { content: "💬"; position: absolute; right: -22px; top: 0; font-size: 12px; }
+/* <pre> has overflow-x: auto, and tables can overflow: clip the margin pin. Anchor inside. */
+.a2ui-markdown-preview pre[data-has-comment]::after,
+.a2ui-markdown-preview table[data-has-comment]::after { right: 8px; top: 6px; }
+/* GFM tables: marked emits unstyled <table>. Give it real structure. */
+.a2ui-markdown-preview table { border-collapse: collapse; width: 100%; margin: 0.5rem 0; font-size: 0.92rem; }
+.a2ui-markdown-preview th,
+.a2ui-markdown-preview td { padding: 6px 10px; border: 1px solid var(--border); text-align: left; vertical-align: top; }
+.a2ui-markdown-preview th { background: var(--surface-2); font-weight: 600; }
+.a2ui-markdown-preview tbody tr:nth-child(even) td { background: rgba(255,255,255,0.025); }
 .a2ui-markdown-preview .a2ui-markdown-anchor-highlight { transition: background-color 1.2s ease-out; background: rgba(255,236,120,0.35) !important; }
 .a2ui-markdown-doc-comment { grid-column: 1 / -1; border-top: 1px solid var(--border); padding: 8px 0; margin-top: 8px; }
 .a2ui-markdown-doc-comment-label { display: block; font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
