@@ -739,6 +739,12 @@ body {
 .a2ui-markdown-doc-comment-label { display: block; font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
 .a2ui-markdown-doc-comment-body { width: 100%; padding: 6px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg); color: var(--text); font: 11px Monaco, monospace; resize: vertical; min-height: 48px; }
 .a2ui-markdown-doc-comment-body:focus { outline: none; border-color: var(--accent); }
+.a2ui-markdown-tabs { display: flex; gap: 4px; margin-bottom: 8px; border-bottom: 1px solid var(--border); grid-column: 1 / -1; }
+.a2ui-markdown-tab { padding: 4px 12px; font-size: 11px; background: transparent; border: none; border-bottom: 2px solid transparent; color: var(--muted); cursor: pointer; transition: color 0.12s, border-color 0.12s; }
+.a2ui-markdown-tab:hover { color: var(--text); }
+.a2ui-markdown-tab--active { color: var(--text); border-bottom-color: var(--accent); font-weight: 500; }
+.a2ui-markdown-source { width: 100%; min-height: 240px; padding: 8px; font: 12px/1.5 Monaco, monospace; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 5px; resize: vertical; grid-column: 1 / -1; }
+.a2ui-markdown-source:focus { outline: none; border-color: var(--accent); }
 """
 
 let a2uiRendererJS = """
@@ -991,6 +997,29 @@ let a2uiRendererJS = """
       wrapper.appendChild(title);
     }
 
+    // Create tab bar when allowEdits is true
+    let tabBar = null;
+    let previewTab = null;
+    let sourceTab = null;
+    if (props.allowEdits === true) {
+      tabBar = document.createElement('div');
+      tabBar.className = 'a2ui-markdown-tabs';
+      
+      previewTab = document.createElement('button');
+      previewTab.className = 'a2ui-markdown-tab a2ui-markdown-tab--active';
+      previewTab.dataset.tab = 'preview';
+      previewTab.textContent = 'Preview';
+      
+      sourceTab = document.createElement('button');
+      sourceTab.className = 'a2ui-markdown-tab';
+      sourceTab.dataset.tab = 'source';
+      sourceTab.textContent = 'Source';
+      
+      tabBar.appendChild(previewTab);
+      tabBar.appendChild(sourceTab);
+      wrapper.appendChild(tabBar);
+    }
+
     // Create preview container
     const preview = document.createElement('div');
     preview.className = 'a2ui-markdown-preview';
@@ -1007,6 +1036,58 @@ let a2uiRendererJS = """
     } else {
       console.error('renderMarkdown not available');
       preview.textContent = 'Error: markdown renderer not loaded';
+    }
+
+    // Create source textarea when allowEdits is true
+    let sourceTextarea = null;
+    if (props.allowEdits === true) {
+      sourceTextarea = document.createElement('textarea');
+      sourceTextarea.className = 'a2ui-markdown-source';
+      sourceTextarea.setAttribute('hidden', '');
+      sourceTextarea.value = text;
+      wrapper.appendChild(sourceTextarea);
+      
+      // Tab switching handler
+      const switchTab = (tabName) => {
+        if (tabName === 'preview') {
+          preview.removeAttribute('hidden');
+          if (sourceTextarea) sourceTextarea.setAttribute('hidden', '');
+          if (previewTab) {
+            previewTab.classList.add('a2ui-markdown-tab--active');
+            sourceTab.classList.remove('a2ui-markdown-tab--active');
+          }
+        } else if (tabName === 'source') {
+          preview.setAttribute('hidden', '');
+          if (sourceTextarea) sourceTextarea.removeAttribute('hidden');
+          if (sourceTab) {
+            sourceTab.classList.add('a2ui-markdown-tab--active');
+            previewTab.classList.remove('a2ui-markdown-tab--active');
+          }
+        }
+      };
+      
+      // Tab button click handlers
+      if (previewTab) {
+        previewTab.addEventListener('click', (e) => {
+          e.preventDefault();
+          switchTab('preview');
+        });
+      }
+      if (sourceTab) {
+        sourceTab.addEventListener('click', (e) => {
+          e.preventDefault();
+          switchTab('source');
+        });
+      }
+      
+      // Keyboard shortcut: Cmd+/ or Ctrl+/
+      wrapper.addEventListener('keydown', (e) => {
+        if ((e.metaKey || e.ctrlKey) && e.key === '/') {
+          e.preventDefault();
+          const currentActive = previewTab && previewTab.classList.contains('a2ui-markdown-tab--active') ? 'preview' : 'source';
+          switchTab(currentActive === 'preview' ? 'source' : 'preview');
+        }
+      });
     }
 
     if (props.allowComments === true) {
