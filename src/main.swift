@@ -577,7 +577,39 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Wire standard Edit menu so Cmd+C/V/X/A/Z route to WKWebView via NSResponder chain.
+        // Without this, an .accessory-policy app routes those shortcuts nowhere.
+        setupEditMenu()
         coordinator.run()
+    }
+
+    private func setupEditMenu() {
+        let mainMenu = NSMenu()
+
+        // Required app menu (first item). Items inside aren't strictly needed for our case,
+        // but the mainMenu must have at least one submenu for menu equivalents to resolve.
+        let appMenuItem = NSMenuItem()
+        let appMenu = NSMenu()
+        appMenu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenuItem.submenu = appMenu
+        mainMenu.addItem(appMenuItem)
+
+        // Edit menu — the actual reason we're here.
+        let editItem = NSMenuItem()
+        let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(withTitle: "Undo",       action: Selector(("undo:")),      keyEquivalent: "z")
+        let redo = NSMenuItem(title: "Redo",      action: Selector(("redo:")),      keyEquivalent: "Z")
+        redo.keyEquivalentModifierMask = [.command, .shift]
+        editMenu.addItem(redo)
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: "Cut",        action: Selector(("cut:")),       keyEquivalent: "x")
+        editMenu.addItem(withTitle: "Copy",       action: Selector(("copy:")),      keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Paste",      action: Selector(("paste:")),     keyEquivalent: "v")
+        editMenu.addItem(withTitle: "Select All", action: Selector(("selectAll:")), keyEquivalent: "a")
+        editItem.submenu = editMenu
+        mainMenu.addItem(editItem)
+
+        NSApp.mainMenu = mainMenu
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -1175,6 +1207,10 @@ let a2uiRendererJS = """
 
       // Click handler for blocks in preview
       preview.addEventListener('click', (e) => {
+        // If the user just finished a text selection, don't hijack the mouseup
+        // into opening a composer — let them copy what they selected.
+        const sel = window.getSelection && window.getSelection();
+        if (sel && !sel.isCollapsed && sel.toString().trim().length > 0) return;
         const block = e.target.closest('[data-src-start]');
         if (!block) return;
         if (e.target.closest('.a2ui-markdown-composer')) return;
