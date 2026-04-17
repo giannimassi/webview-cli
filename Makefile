@@ -25,4 +25,5 @@ test: $(BINARY)
 	@./$(BINARY) --markdown --comments --edits --timeout 1 2>&1 | grep -q '"error"' && ! ./$(BINARY) --markdown --comments --edits --timeout 1 2>&1 | grep -qi "unknown" && echo "PASS: --markdown --comments --edits fail at runtime (URL required), not at parse" || (echo "FAIL: --markdown --comments --edits" && exit 1)
 	@./$(BINARY) --markdown --a2ui 2>&1 | grep -q "mutually exclusive" && echo "PASS: --markdown --a2ui rejects with error" || (echo "FAIL: --markdown --a2ui mutual exclusion" && exit 1)
 	@strings $(BINARY) | grep -q micromark && echo "PASS: micromark embedded in binary" || (echo "FAIL: micromark not found" && exit 1)
+	@strings $(BINARY) | grep -q renderMarkdown && echo "PASS: renderMarkdown function embedded in binary" || (echo "FAIL: renderMarkdown not found" && exit 1)
 	@echo "All smoke tests pass"
