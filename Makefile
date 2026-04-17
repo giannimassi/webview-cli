@@ -27,4 +27,6 @@ test: $(BINARY)
 	@strings $(BINARY) | grep -q micromark && echo "PASS: micromark embedded in binary" || (echo "FAIL: micromark not found" && exit 1)
 	@strings $(BINARY) | grep -q renderMarkdown && echo "PASS: renderMarkdown function embedded in binary" || (echo "FAIL: renderMarkdown not found" && exit 1)
 	@echo '{"surfaceUpdate":{"components":[{"id":"root","component":{"Column":{"children":{"explicitList":["doc","btn"]}}}},{"id":"doc","component":{"MarkdownDoc":{"fieldName":"review","text":"# Hi\n\nHello."}}},{"id":"btn","component":{"Button":{"label":{"literalString":"OK"},"action":{"name":"ok"}}}}]}}{"beginRendering":{"root":"root"}}' | ./$(BINARY) --a2ui --timeout 1 2>&1 | grep -qv '"error"' && echo "PASS: MarkdownDoc renders without error" || (echo "FAIL: MarkdownDoc errored" && exit 1)
+	@echo '# Hi' | ./$(BINARY) --markdown --timeout 1 2>/dev/null | grep -qv '"error"' && echo "PASS: --markdown stdin test with heading renders" || (echo "FAIL: --markdown stdin rendering" && exit 1)
+	@printf '' | ./$(BINARY) --markdown --timeout 1 2>/dev/null | grep -q 'no markdown provided on stdin' && echo "PASS: empty markdown stdin yields error message" || (echo "FAIL: empty markdown stdin" && exit 1)
 	@echo "All smoke tests pass"
