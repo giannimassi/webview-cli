@@ -1115,7 +1115,7 @@ let a2uiRendererJS = """
         composer.appendChild(actions);
         list.insertBefore(composer, list.firstChild);
         textarea.focus();
-      };
+      });
     }
 
     return wrapper;
