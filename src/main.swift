@@ -735,6 +735,10 @@ body {
 .a2ui-markdown-preview [data-has-comment] { position: relative; background: rgba(255,193,7,0.08); border-left: 2px solid #ffc107; padding-left: 6px; }
 .a2ui-markdown-preview [data-has-comment]::after { content: "💬"; position: absolute; right: -22px; top: 0; font-size: 12px; }
 .a2ui-markdown-preview .a2ui-markdown-anchor-highlight { transition: background-color 1.2s ease-out; background: rgba(255,236,120,0.35) !important; }
+.a2ui-markdown-doc-comment { grid-column: 1 / -1; border-top: 1px solid var(--border); padding: 8px 0; margin-top: 8px; }
+.a2ui-markdown-doc-comment-label { display: block; font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+.a2ui-markdown-doc-comment-body { width: 100%; padding: 6px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg); color: var(--text); font: 11px Monaco, monospace; resize: vertical; min-height: 48px; }
+.a2ui-markdown-doc-comment-body:focus { outline: none; border-color: var(--accent); }
 """
 
 let a2uiRendererJS = """
@@ -976,6 +980,9 @@ let a2uiRendererJS = """
     marker.style.display = 'none';
     wrapper.appendChild(marker);
 
+
+    // Initialize doc comment state
+    wrapper._mdDocComment = '';
     // Add title if provided
     if (props.title) {
       const title = document.createElement('h3');
@@ -1132,6 +1139,23 @@ let a2uiRendererJS = """
         block.classList.add('a2ui-markdown-anchor-highlight');
         setTimeout(() => { block.classList.remove('a2ui-markdown-anchor-highlight'); }, 1200);
       });
+
+      // Initialize and render doc-level comment field
+      const docCommentField = document.createElement('div');
+      docCommentField.className = 'a2ui-markdown-doc-comment';
+      const docCommentLabel = document.createElement('label');
+      docCommentLabel.className = 'a2ui-markdown-doc-comment-label';
+      docCommentLabel.textContent = 'OVERALL COMMENT';
+      docCommentField.appendChild(docCommentLabel);
+      const docCommentTextarea = document.createElement('textarea');
+      docCommentTextarea.className = 'a2ui-markdown-doc-comment-body';
+      docCommentTextarea.placeholder = 'Add an overall comment…';
+      docCommentTextarea.rows = 3;
+      docCommentTextarea.addEventListener('input', (e) => {
+        wrapper._mdDocComment = e.target.value;
+      });
+      docCommentField.appendChild(docCommentTextarea);
+      wrapper.appendChild(docCommentField);
     }
 
     return wrapper;
