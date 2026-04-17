@@ -581,10 +581,27 @@ body {
 .a2ui-checkbox input { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
 .a2ui-checkbox span { font-size: 0.925rem; }
 .a2ui-image { max-width: 100%; height: auto; border-radius: 8px; display: block; }
+.a2ui-markdown-doc { display: flex; flex-direction: column; gap: 1rem; }
+.a2ui-markdown-doc-title { font-size: 1.05rem; font-weight: 600; letter-spacing: -0.01em; color: var(--text); }
+.a2ui-markdown-preview { line-height: 1.6; color: var(--text); }
+.a2ui-markdown-preview h1, .a2ui-markdown-preview h2, .a2ui-markdown-preview h3, .a2ui-markdown-preview h4, .a2ui-markdown-preview h5, .a2ui-markdown-preview h6 { margin-top: 0.5rem; margin-bottom: 0.5rem; font-weight: 600; }
+.a2ui-markdown-preview h1 { font-size: 1.75rem; }
+.a2ui-markdown-preview h2 { font-size: 1.35rem; }
+.a2ui-markdown-preview h3 { font-size: 1.05rem; }
+.a2ui-markdown-preview p { margin-bottom: 0.5rem; }
+.a2ui-markdown-preview code { background: var(--surface-2); padding: 0.2rem 0.4rem; border-radius: 3px; font-family: 'Monaco', 'Menlo', 'Courier New', monospace; font-size: 0.9em; }
+.a2ui-markdown-preview pre { background: var(--surface-2); padding: 1rem; border-radius: 6px; overflow-x: auto; margin-bottom: 0.5rem; }
+.a2ui-markdown-preview pre code { background: transparent; padding: 0; }
+.a2ui-markdown-preview blockquote { border-left: 3px solid var(--accent); padding-left: 1rem; color: var(--muted); margin-left: 0; margin-bottom: 0.5rem; }
+.a2ui-markdown-preview ul, .a2ui-markdown-preview ol { margin-left: 1.5rem; margin-bottom: 0.5rem; }
+.a2ui-markdown-preview li { margin-bottom: 0.25rem; }
+.a2ui-markdown-preview a { color: var(--accent); text-decoration: none; }
+.a2ui-markdown-preview a:hover { text-decoration: underline; }
+.a2ui-markdown-preview hr { border: none; border-top: 1px solid var(--border); margin: 1rem 0; }
 """
 
 let a2uiRendererJS = """
-// Minimal A2UI v0.8 renderer — supports: Text, TextInput, Button, Column, Row, Card, Select, Checkbox, RadioGroup, Image, Divider
+// Minimal A2UI v0.8 renderer — supports: Text, TextInput, Button, Column, Row, Card, Select, Checkbox, RadioGroup, Image, Divider, MarkdownDoc
 // Renders adjacency list → DOM, wires userAction → postMessage bridge
 
 (function() {
@@ -616,6 +633,7 @@ let a2uiRendererJS = """
       const name = el.dataset.a2uiField;
       if (el.type === 'checkbox') data[name] = el.checked;
       else if (el.type === 'radio') { if (el.checked) data[name] = el.value; }
+      else if (el.dataset.a2uiMarkdownDocField) { data[name] = { action: 'acknowledge' }; }
       else data[name] = el.value;
     });
     return data;
@@ -642,6 +660,7 @@ let a2uiRendererJS = """
       case 'RadioGroup': return renderRadioGroup(props);
       case 'Image': return renderImage(props);
       case 'Divider': return renderDivider();
+      case 'MarkdownDoc': return renderMarkdownDoc(props);
       default:
         const fallback = document.createElement('div');
         fallback.textContent = '[unsupported: ' + type + ']';
@@ -806,6 +825,47 @@ let a2uiRendererJS = """
     if (props.width) img.style.width = props.width + 'px';
     if (props.height) img.style.height = props.height + 'px';
     return img;
+  }
+
+  function renderMarkdownDoc(props) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'a2ui-markdown-doc';
+
+    // Create a marker element to track this field in form data collection
+    const marker = document.createElement('div');
+    const fieldName = props.fieldName || 'markdown_' + Math.random().toString(36).slice(2,6);
+    marker.dataset.a2uiField = fieldName;
+    marker.dataset.a2uiMarkdownDocField = 'true';
+    marker.style.display = 'none';
+    wrapper.appendChild(marker);
+
+    // Add title if provided
+    if (props.title) {
+      const title = document.createElement('h3');
+      title.className = 'a2ui-markdown-doc-title';
+      title.textContent = resolveValue(props.title);
+      wrapper.appendChild(title);
+    }
+
+    // Create preview container
+    const preview = document.createElement('div');
+    preview.className = 'a2ui-markdown-preview';
+    wrapper.appendChild(preview);
+
+    // Get markdown text
+    const text = props.text || '';
+    if (!text) {
+      console.warn('[MarkdownDoc] Missing text prop for component: ' + fieldName);
+      preview.textContent = '(no content)';
+    } else if (window.renderMarkdown) {
+      const allowHtml = props.allowHtml === true;
+      window.renderMarkdown(text, preview, { allowHtml });
+    } else {
+      console.error('renderMarkdown not available');
+      preview.textContent = 'Error: markdown renderer not loaded';
+    }
+
+    return wrapper;
   }
 
   function processMessages(messages) {

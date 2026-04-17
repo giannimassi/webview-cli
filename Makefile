@@ -26,4 +26,5 @@ test: $(BINARY)
 	@./$(BINARY) --markdown --a2ui 2>&1 | grep -q "mutually exclusive" && echo "PASS: --markdown --a2ui rejects with error" || (echo "FAIL: --markdown --a2ui mutual exclusion" && exit 1)
 	@strings $(BINARY) | grep -q micromark && echo "PASS: micromark embedded in binary" || (echo "FAIL: micromark not found" && exit 1)
 	@strings $(BINARY) | grep -q renderMarkdown && echo "PASS: renderMarkdown function embedded in binary" || (echo "FAIL: renderMarkdown not found" && exit 1)
+	@echo '{"surfaceUpdate":{"components":[{"id":"root","component":{"Column":{"children":{"explicitList":["doc","btn"]}}}},{"id":"doc","component":{"MarkdownDoc":{"fieldName":"review","text":"# Hi\n\nHello."}}},{"id":"btn","component":{"Button":{"label":{"literalString":"OK"},"action":{"name":"ok"}}}}]}}{"beginRendering":{"root":"root"}}' | ./$(BINARY) --a2ui --timeout 1 2>&1 | grep -qv '"error"' && echo "PASS: MarkdownDoc renders without error" || (echo "FAIL: MarkdownDoc errored" && exit 1)
 	@echo "All smoke tests pass"
