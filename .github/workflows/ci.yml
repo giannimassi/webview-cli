@@ -18,12 +18,12 @@ jobs:
       - name: Build
         run: make build
 
-      - name: Verify binary size under 250KB
+      - name: Verify binary size under 300KB
         run: |
           SIZE=$(stat -f%z webview-cli)
           echo "Binary size: $SIZE bytes"
-          if [ "$SIZE" -gt 262144 ]; then
-            echo "Binary exceeds 250KB budget"
+          if [ "$SIZE" -gt 307200 ]; then
+            echo "Binary exceeds 300KB budget (v0.2.0 baseline; markdown editor adds ~100KB over the v0.1.x 193KB base)"
             exit 1
           fi
 
