@@ -732,6 +732,9 @@ body {
 .a2ui-markdown-comment { background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; padding: 8px; margin-bottom: 8px; }
 .a2ui-markdown-comment-quote { font-size: 10px; color: var(--muted); font-style: italic; margin-bottom: 4px; line-height: 1.4; }
 .a2ui-markdown-comment-body { font-size: 11px; color: var(--text); line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+.a2ui-markdown-preview [data-has-comment] { position: relative; background: rgba(255,193,7,0.08); border-left: 2px solid #ffc107; padding-left: 6px; }
+.a2ui-markdown-preview [data-has-comment]::after { content: "💬"; position: absolute; right: -22px; top: 0; font-size: 12px; }
+.a2ui-markdown-preview .a2ui-markdown-anchor-highlight { transition: background-color 1.2s ease-out; background: rgba(255,236,120,0.35) !important; }
 """
 
 let a2uiRendererJS = """
@@ -1090,6 +1093,7 @@ let a2uiRendererJS = """
             body: body
           };
           wrapper._mdComments.push(comment);
+          block.setAttribute('data-has-comment', 'true');
 
           // Replace composer with committed-comment card
           const card = document.createElement('div');
@@ -1115,6 +1119,18 @@ let a2uiRendererJS = """
         composer.appendChild(actions);
         list.insertBefore(composer, list.firstChild);
         textarea.focus();
+      });
+
+      // Click handler for committed-comment cards: scroll to block and highlight
+      list.addEventListener('click', (e) => {
+        const card = e.target.closest('.a2ui-markdown-comment');
+        if (!card) return;
+        const start = parseInt(card.dataset.srcStart, 10);
+        const block = preview.querySelector('[data-src-start="' + start + '"]');
+        if (!block) return;
+        block.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        block.classList.add('a2ui-markdown-anchor-highlight');
+        setTimeout(() => { block.classList.remove('a2ui-markdown-anchor-highlight'); }, 1200);
       });
     }
 
