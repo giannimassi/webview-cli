@@ -109,6 +109,26 @@ if (!hasH1) {
 }
 console.log(`PASS: window.renderMarkdown produced ${blocks.length} annotated blocks including <h1>`);
 
+// 2b. YAML frontmatter is stripped and downstream line numbers stay anchored to the original source.
+const fmContainer = w.document.createElement("div");
+const fmSource = "---\ntitle: My Doc\ndate: 2026-04-21\n---\n\n# Real heading\n\nBody text here.\n";
+w.renderMarkdown(fmSource, fmContainer);
+const fmHeadings = fmContainer.querySelectorAll("h1, h2");
+if (fmHeadings.length !== 1 || fmHeadings[0].tagName !== "H1" || fmHeadings[0].textContent !== "Real heading") {
+  console.error("FAIL: frontmatter not stripped — expected single <h1>Real heading</h1>. innerHTML:", fmContainer.innerHTML);
+  process.exit(1);
+}
+if (fmContainer.querySelector("hr")) {
+  console.error("FAIL: frontmatter left a stray <hr>. innerHTML:", fmContainer.innerHTML);
+  process.exit(1);
+}
+const fmH1 = fmHeadings[0];
+if (fmH1.getAttribute("data-src-start") !== "6") {
+  console.error(`FAIL: <h1> data-src-start should be 6 (line of "# Real heading" in original), got ${fmH1.getAttribute("data-src-start")}`);
+  process.exit(1);
+}
+console.log("PASS: frontmatter stripped from preview; downstream data-src-start lines still reference the original source");
+
 // 3. Sanitizer strips <script> by default.
 if (typeof w.sanitizeMarkdownDOM !== "function") {
   console.error("FAIL: window.sanitizeMarkdownDOM is not a function");

@@ -2,6 +2,12 @@
 
 All notable changes to webview-cli. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- **YAML frontmatter in `--markdown` mode** — a leading `---\n...\n---\n` block at the top of the input no longer renders as a stray `<hr>` + a setext `<h2>` containing the YAML keys. It's stripped from the preview while the Source tab still shows it unchanged and `data-src-start` / `data-src-end` annotations on downstream blocks stay anchored to the original line numbers (so comment payloads reference the lines the user actually sees).
+
 ## [0.2.0] — 2026-04-17
 
 ### Added
