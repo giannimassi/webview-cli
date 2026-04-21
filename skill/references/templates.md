@@ -105,13 +105,61 @@ or
 
 (`data.data` is empty because this template has no `fieldName` inputs — it's an acknowledgement-only flow.)
 
+## 5. Markdown document review (`--markdown` mode)
+
+Use for: spec review, PR description review, draft approval, any flow where the agent produced markdown and the human needs to read / comment on / edit it.
+
+This is **not** A2UI JSONL — it's a separate mode. Pipe raw markdown on stdin.
+
+```bash
+cat /tmp/spec.md | webview-cli --markdown --comments --edits \
+  --title "Review: PORTAL-169 bulk-link SQL" \
+  --width 900 --height 720 --timeout 540
+```
+
+**Flag matrix** (comments and edits compose):
+
+| Flags | Window shows | Submit returns |
+|-------|--------------|----------------|
+| (neither) | Read-only preview + OK/Cancel | `{"action":"acknowledge"}` |
+| `--comments` | Preview + clickable blocks + comment sidebar + doc-level field | `{comments:[...], doc_comment:"..."}` |
+| `--edits` | Tabbed Preview/Source (`Cmd+/` toggles) | `{edited_text:"...", modified:bool}` |
+| `--comments --edits` | Both sidebars + tabs | all four fields |
+
+**Response shape (comments + edits):**
+
+```json
+{
+  "status": "completed",
+  "data": {
+    "action": "submit",
+    "data": {
+      "comments": [
+        {"source_line_start": 5, "source_line_end": 5, "quoted_text": "Phase 1: canary deploy.", "body": "Clarify the ramp rate."}
+      ],
+      "doc_comment": "Looks good overall.",
+      "edited_text": "# Updated spec\n\n...",
+      "modified": true
+    }
+  }
+}
+```
+
+**Notes:**
+- `source_line_start` / `source_line_end` are 1-indexed against the submitted markdown source
+- `comments` is always an empty array `[]` (not absent) when `--comments` is on and the user added none
+- `doc_comment` is `""` (not absent) when left blank
+- `modified` is `true` iff the source tab differs from the input
+- Keyboard shortcuts: `Cmd+Enter` submit, `Esc`/`Cmd+W` cancel, `Cmd+/` toggle Preview/Source
+- HTML in the markdown is sanitized by default. Pass `--allow-html` for trusted content only
+
 ## Template variables guide
 
 When substituting into templates:
 
 - **Titles**: 3-6 words, imperative or declarative. "Deploy Approval Required", "Choose a Base Branch".
 - **Subtitles**: one sentence, ~10-15 words, give context.
-- **Descriptions**: can be multi-paragraph but no markdown — plain text only (the renderer doesn't parse markdown).
+- **Descriptions**: in a `Text` component, plain text only — `Text` does not parse markdown. If you need rendered markdown (headings, lists, code blocks, tables, links), use the `MarkdownDoc` component inside your A2UI form, or switch the whole window to `--markdown` mode.
 - **Button labels**: 1-2 words, action verb. "Approve" > "Yes, I approve".
 - **Field names**: snake_case identifiers. These become JSON keys in the response.
 - **Field labels**: human-readable, Title Case.

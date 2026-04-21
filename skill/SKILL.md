@@ -21,6 +21,7 @@ If running the command feels risky, ask for permission to run it — not to past
 | Collecting 3+ related fields (name + role + options) | **Yes** — one form beats N questions |
 | Presenting 5-20 options to choose from | **Yes** — radio/select picker |
 | Showing a diff/preview/report before user confirms | **Yes** — formatted content is readable |
+| Reviewing a markdown doc (spec, PR description, draft) with comments/edits | **Yes** — use `--markdown` mode (Mode 3) |
 | Simple yes/no question | **No** — just ask in terminal |
 | Agent-side computation taking >30s before UI can render | **No** — show a text status instead |
 | Non-interactive environment (CI, piped output) | **No** — preflight will fail, fall back to terminal |
@@ -42,7 +43,9 @@ fi
 
 If preflight fails, fall back to terminal Q&A — don't try to be clever. Report why the webview path isn't available and continue in text.
 
-## The three modes
+## The four modes
+
+**Exactly one of `--a2ui`, `--url`, or `--markdown` must be specified.** Omitting all three is the most common failure — the binary exits 3 with usage.
 
 ### Mode 1 — `a2ui` (recommended) · declarative UI
 
@@ -60,9 +63,38 @@ Best for OAuth flows, external services, pre-built pages. The page must call `wi
 webview-cli --url "https://auth.example.com/oauth" --timeout 120
 ```
 
-### Mode 3 — `html` · custom HTML via `agent://`
+### Mode 3 — `markdown` · review / comment / edit a markdown doc
 
-Best when you need visual fidelity beyond A2UI (charts, diffs, diagrams). The HTML page uses the same `window.webkit.messageHandlers.complete.postMessage({...})` bridge.
+Best for spec review, PR-description review, draft approval — any flow where the agent produced markdown and the human needs to read, comment on, or edit it. Feed markdown on stdin. Rendered with CommonMark + GFM (tables, fenced code).
+
+Three independent toggles:
+
+| Flag | Adds |
+|------|------|
+| (none) | Read-only preview + OK/Cancel. Returns `{"action":"acknowledge"}` |
+| `--comments` | Clickable blocks → inline comment sidebar + doc-level comment field. Returns `{comments:[...], doc_comment:"..."}` |
+| `--edits` | Preview/Source tabs (`Cmd+/` to toggle). Returns `{edited_text:"...", modified:bool}` |
+| `--allow-html` | Opt out of HTML sanitization (default strips `<script>`, `<iframe>`, event handlers, `javascript:` URLs). Use only for trusted content. |
+
+`--comments` and `--edits` compose; turn both on to get all four fields back.
+
+```bash
+cat /tmp/spec.md | webview-cli --markdown --comments --title "Review spec v1" --width 900 --height 720 --timeout 540
+```
+
+**Comment object shape** (each entry in the `comments` array):
+
+```json
+{"source_line_start": 5, "source_line_end": 5, "quoted_text": "...", "body": "..."}
+```
+
+Line numbers are 1-indexed against the markdown source.
+
+### Mode 4 — `html` · custom HTML via `agent://`
+
+Best when you need visual fidelity beyond A2UI and markdown (charts, custom diffs, diagrams). The HTML page uses the same `window.webkit.messageHandlers.complete.postMessage({...})` bridge.
+
+**Before reaching for Mode 4, ask whether Mode 3 (markdown) covers the case.** Markdown renders GFM tables, fenced code, links, and lists — enough for ~80% of "show the user some formatted content" needs, with no HTML to author or debug.
 
 **Two separate Bash calls** (don't chain — the `load` command and the webview invocation sequence matters):
 
@@ -81,18 +113,20 @@ webview-cli --url "agent://host/index.html" --timeout 120 < /tmp/wv-load.json
 
 **The `--url` CLI flag is required** — without it the binary exits with usage. The stdin `load` command populates the in-memory resource map that `agent://host/...` reads from.
 
-Pick Mode 3 over A2UI only when you need charts, syntax-highlighted diffs, images, or custom interactions. If you're writing >200 lines of HTML, consider splitting the work into a proper tool instead.
+**Common failure — `NSURLErrorDomain error -1100`**: the resource key in the `load` command doesn't match the path in `--url`. If you use `--url "agent://host/index.html"`, the `resources` map must contain the key `"index.html"` (exact match, no leading slash). When this persistently fails, fall back to Mode 3 — pipe the rendered content as markdown instead of hand-rolling HTML.
+
+Pick Mode 4 over Mode 3 only when you need charts, syntax-highlighted diffs, images, or custom interactions. If you're writing >200 lines of HTML, consider splitting the work into a proper tool instead.
 
 ## A2UI catalog (Mode 1)
 
-All 11 components in the built-in renderer:
+All 12 components in the built-in renderer:
 
 | Component | Purpose | Key props |
 |-----------|---------|-----------|
 | `Column` | Vertical stack | `children.explicitList` (array of IDs) |
 | `Row` | Horizontal arrangement | `children.explicitList`, `alignment` ("center" \| "end" \| "space-between") |
 | `Card` | Visual grouping with padding | `child` (single ID) or `children.explicitList` |
-| `Text` | Typography | `text.literalString`, `usageHint` ("h1" \| "h2" \| "h3" \| "subtitle" \| "body" \| "caption") |
+| `Text` | Typography (plain text only — no markdown parsing) | `text.literalString`, `usageHint` ("h1" \| "h2" \| "h3" \| "subtitle" \| "body" \| "caption") |
 | `TextInput` | Single-line or multiline input | `label.literalString`, `placeholder.literalString`, `fieldName`, `multiline` (bool) |
 | `Select` | Dropdown | `label.literalString`, `fieldName`, `options` (array of `{value, label}` or strings) |
 | `Checkbox` | Single checkbox | `label.literalString`, `fieldName`, `checked` (bool, default false) |
@@ -100,8 +134,11 @@ All 11 components in the built-in renderer:
 | `Image` | Inline image | `url` (literal or data ref), optional `alt`, `width`, `height` |
 | `Button` | Action button | `label.literalString`, `variant` ("primary" \| "secondary" \| "danger" \| "success"), `action.name`, optional `action.context` |
 | `Divider` | Horizontal rule | — |
+| `MarkdownDoc` | Rendered markdown inside an A2UI form (CommonMark + GFM) | `fieldName` (required), `text` (required markdown source), `allowComments` (bool), `allowEdits` (bool), `allowHtml` (bool), `title` (string) |
 
 **Form data collection**: every component with `fieldName` is collected when a Button is clicked. The response `data` contains `{fieldName: value, ...}` plus the button's `action.name` (and `action.context` if set).
+
+**`MarkdownDoc` vs `--markdown` mode**: use `MarkdownDoc` when the markdown review is one part of a larger form (e.g. spec review + "approve/reject" radio + notes field). Use `--markdown` mode (Mode 3) when the window is *only* about the markdown doc — simpler invocation, no JSONL to generate.
 
 ## Response format reference
 
@@ -166,7 +203,11 @@ For anything beyond trivial substitution, **write the JSONL in a Python generato
 ## Workflow: when asked to show UI
 
 1. **Run preflight** (above). If it fails, fall back to terminal Q&A with a one-line note.
-2. **Pick the mode**: A2UI (forms/approvals/selection — 90% of cases), URL (existing page), HTML (rich visuals only).
+2. **Pick the mode**:
+   - A2UI (forms/approvals/selection) — most common
+   - `--markdown` — reviewing a spec / PR description / draft; simpler than A2UI when the window is only about the doc
+   - URL — existing page (OAuth, external service)
+   - HTML via `agent://` — last resort for rich visuals that neither A2UI nor markdown can render
 3. **Window size**: small forms 520×460, mid-size 620×580, full content 720×700. Tight height prevents dead space at the bottom.
 4. **Pick a `--timeout`**:
    - 120s — simple approval (user is present)
