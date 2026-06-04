@@ -344,9 +344,21 @@ struct FileService {
             for name in names.sorted(by: >) {  // reversed so DFS pops in alphabetical order
                 if name.hasPrefix(".") { continue }
                 let child = dir.appendingPathComponent(name)
-                var isDir: ObjCBool = false
-                FileManager.default.fileExists(atPath: child.path, isDirectory: &isDir)
-                if isDir.boolValue {
+                // Never follow symlinks in the bulk walk: a symlinked dir/file
+                // could point outside root (sandbox escape), and a symlink loop
+                // could make the walk non-terminating. The tree view's resolve()
+                // already rejects out-of-root symlinks; this matches that for
+                // listAll/search, which don't go through resolve().
+                let vals = try? child.resourceValues(forKeys: [.isSymbolicLinkKey, .isDirectoryKey])
+                if vals?.isSymbolicLink == true { continue }
+                let isDir: Bool
+                if let d = vals?.isDirectory { isDir = d }
+                else {
+                    var objc: ObjCBool = false
+                    FileManager.default.fileExists(atPath: child.path, isDirectory: &objc)
+                    isDir = objc.boolValue
+                }
+                if isDir {
                     if FileService.skipDirs.contains(name) { continue }
                     stack.append(child)
                 } else {
@@ -2980,6 +2992,10 @@ let editorJS = #"""
   // Global Cmd/Ctrl+S to save; Cmd/Ctrl+Enter to submit (comments mode);
   // Cmd/Ctrl+P quick-open; Cmd/Ctrl+Shift+F content search.
   document.addEventListener('keydown', (e) => {
+    // When a palette/search overlay input is focused, it owns its own keys
+    // (Esc/arrows/Enter) — don't let the global shortcuts re-fire (e.g. ⌘P
+    // typed into the quick-open input shouldn't toggle the palette).
+    if (e.target && e.target.closest && e.target.closest('.editor-overlay')) return;
     if ((e.metaKey || e.ctrlKey) && !e.shiftKey && (e.key === 'p' || e.key === 'P')) {
       e.preventDefault();
       openQuickOpen();

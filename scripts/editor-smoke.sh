@@ -87,4 +87,17 @@ echo "$OUT" | grep -q 'outside-needle' && fail "search leaked a match from outsi
 rm -f "$TMP/../outside-needle.txt" 2>/dev/null || true
 echo "PASS: editor search stays within root"
 
+# 10. Symlink escape: a symlink inside root pointing OUTSIDE must not be walked
+# by listAll/search (sandbox escape) and must not hang on a loop.
+SECRET="$(mktemp -d "${TMPDIR:-/tmp}/webview-secret.XXXXXX")"
+printf 'topsecret needle\n' > "$SECRET/leak.txt"
+ln -s "$SECRET" "$TMP/escape-link" 2>/dev/null || true
+ln -s "$TMP" "$TMP/loop-link" 2>/dev/null || true   # self-referential loop
+OUT="$(op '{"type":"fileop","op":"listAll"}')"
+echo "$OUT" | grep -q 'leak.txt' && fail "listAll followed a symlink out of root: $OUT"
+OUT="$(op '{"type":"fileop","op":"search","query":"topsecret"}')"
+echo "$OUT" | grep -q 'topsecret' && fail "search followed a symlink out of root: $OUT"
+rm -rf "$SECRET"
+echo "PASS: editor listAll/search do not follow symlinks out of root"
+
 echo "All editor smoke tests pass"
