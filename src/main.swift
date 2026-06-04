@@ -3087,7 +3087,7 @@ func makeAppIcon() -> NSImage {
 }
 
 let app = NSApplication.shared
-app.setActivationPolicy(.accessory)
+app.setActivationPolicy(config.editorMode || config.folderMode ? .regular : .accessory)
 app.applicationIconImage = makeAppIcon()
 
 let coordinator = AppCoordinator(config: config)

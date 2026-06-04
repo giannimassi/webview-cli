@@ -14,6 +14,7 @@ All notable changes to webview-cli. Format follows [Keep a Changelog](https://ke
   - **⌘P quick-open** — fuzzy-find a file by name/path across the whole tree and open it.
   - **⌘⇧F content search** — grep file contents across the tree (scoped, case-insensitive); results group by file with line numbers, click to open at that line.
   - **Edits save to disk in place** (`⌘S`); the window stays open so you can keep navigating and editing.
+  - **Regular app window** — editor mode runs with `.regular` activation policy (Dock icon + ⌘-Tab switcher), unlike the transient `.accessory` agent-prompt modes.
   - **`--comments` flow preserved** — with `--editor --comments`, click a preview block to attach a comment; **Submit** (`⌘↵`) returns `{action:"submit", file, edited_text, comments}` to the agent over stdout and closes, exactly like `--markdown --comments`.
 - **Scoped file-I/O bridge** — a `fileOp` WKScriptMessageHandler (`listDir`/`readFile`/`writeFile`/`listAll`/`search`) scoped to the opened root, rejecting `../` and symlink escapes. `listAll` powers ⌘P; `search` powers ⌘⇧F (skips dotfiles + heavy build dirs like `node_modules`, caps walk/results). Also driveable via a `{"type":"fileop",...}` stdin command (the no-GUI CI test seam).
 - **Editor test harnesses** — `scripts/editor-runtime-smoke.mjs` (jsdom: tree, open/edit/save, highlighting, links, frontmatter, comments) and `scripts/editor-smoke.sh` (binary: the `fileop` stdin protocol + path-escape rejection against a temp dir), both wired into `make test` + CI.
