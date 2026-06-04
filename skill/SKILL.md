@@ -126,7 +126,7 @@ webview-cli --editor ./notes/spec.md     # open a single file (its dir is the tr
 webview-cli --editor ./docs --comments   # add the review/Submit flow on top
 ```
 
-A native text editor over the path: lazy file-tree sidebar, syntax highlighting (code files + fenced markdown blocks), markdown Preview/Source tabs, clickable links (external → browser, relative → opens in-editor), and frontmatter shown as a metadata block. Edits save to disk in place on `⌘S`; the window stays open.
+A native text editor over the path: lazy file-tree sidebar, syntax highlighting (code files + fenced markdown blocks), markdown Preview/Source tabs, clickable links (external → browser, relative → opens in-editor), and frontmatter shown as a metadata block. Edits save to disk in place on `⌘S`; the window stays open. `⌘P` fuzzy quick-open; `⌘⇧F` searches file contents across the tree (click a match to open at that line).
 
 - Filesystem access is **scoped to the opened root** — `../` and symlink escapes are rejected by the binary.
 - Closing the window exits `cancelled` (nothing auto-saves; saves are explicit via `⌘S`).

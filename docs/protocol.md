@@ -82,8 +82,10 @@ echo '{"type":"fileop","op":"writeFile","path":"a.txt","content":"hi"}' | webvie
 | `listDir` | `path` (relative to root, `""` = root) | `{ok, path, entries:[{name, path, type:"dir"\|"file"}]}` — dirs first, dotfiles hidden |
 | `readFile` | `path` | `{ok, path, content}` — UTF-8 only, 4MB cap; `{ok:false, binary:true}` otherwise |
 | `writeFile` | `path`, `content` | `{ok, path}` (atomic write) |
+| `listAll` | — | `{ok, files:[relpath...], truncated}` — flat recursive list for ⌘P (dotfiles + heavy build dirs skipped, capped at 5000) |
+| `search` | `query` | `{ok, matches:[{path, line, text}], truncated}` — case-insensitive content grep for ⌘⇧F (text files <1MB, capped at 500 matches) |
 
-Any escaping path returns `{ok:false, error:"path escapes root"}`. With `--comments`, the **Submit** action posts `{action:"submit", file, edited_text, comments}` through the standard `complete` bridge (see [Stdout contract](#stdout-contract)) and exits — identical in shape to `--markdown --comments`.
+Any escaping path returns `{ok:false, error:"path escapes root"}`; `listAll`/`search` only ever walk within the root. **Keyboard:** `⌘S` save, `⌘P` quick-open palette, `⌘⇧F` content search, `⌘↵` submit (comments mode). With `--comments`, the **Submit** action posts `{action:"submit", file, edited_text, comments}` through the standard `complete` bridge (see [Stdout contract](#stdout-contract)) and exits — identical in shape to `--markdown --comments`.
 
 ### `agent://` scheme (URL mode)
 
