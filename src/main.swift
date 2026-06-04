@@ -2338,6 +2338,43 @@ html, body { height: 100%; padding: 0; margin: 0; overflow: hidden; }
 }
 .editor-comment-actions button.save { background: var(--success); color: #1a1a1c; border-color: transparent; }
 .editor-comment-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* command palette (⌘P) + search (⌘⇧F) overlay */
+.editor-overlay {
+  position: fixed; inset: 0; z-index: 1000;
+  background: rgba(0,0,0,0.45);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding-top: 12vh;
+}
+.editor-palette {
+  width: min(640px, 80vw); max-height: 64vh; display: flex; flex-direction: column;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 16px 48px rgba(0,0,0,0.5); overflow: hidden;
+}
+.editor-palette-input {
+  width: 100%; padding: 12px 14px; border: 0; border-bottom: 1px solid var(--border);
+  background: var(--bg); color: var(--text); font: 14px -apple-system, system-ui, sans-serif;
+}
+.editor-palette-input:focus { outline: none; }
+.editor-palette-list { overflow-y: auto; padding: 4px; }
+.editor-palette-row {
+  padding: 6px 10px; border-radius: 6px; font: 12px 'SF Mono', Monaco, monospace;
+  color: var(--text); cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.editor-palette-row:hover { background: var(--surface-2); }
+.editor-palette-row.selected { background: var(--accent); color: #fff; }
+.editor-palette-empty { padding: 10px; color: var(--muted); font-size: 12px; font-style: italic; }
+.editor-search-file {
+  padding: 8px 10px 2px; font: 600 11px 'SF Mono', Monaco, monospace; color: var(--muted);
+  text-transform: none; position: sticky; top: 0; background: var(--surface);
+}
+.editor-search-match {
+  display: flex; gap: 10px; padding: 4px 10px; border-radius: 6px; cursor: pointer;
+  font: 12px 'SF Mono', Monaco, monospace; align-items: baseline;
+}
+.editor-search-match:hover { background: var(--surface-2); }
+.editor-search-line { color: var(--muted); min-width: 34px; text-align: right; flex: 0 0 auto; }
+.editor-search-text { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 """#
 
 // Compact, dependency-free syntax highlighter. A single generic scanner is
@@ -2463,16 +2500,16 @@ let editorJS = #"""
   const opCb = new Map();
 
   // ---- fileOp bridge (JS -> Swift -> __fileOpReply) ----
-  function fileOp(op, path, content){
+  function fileOp(op, path, content, query){
     return new Promise((resolve) => {
       const id = ++opSeq;
       const mh = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.fileOp;
       if (mh) {
         opCb.set(id, resolve);
-        mh.postMessage({ id: id, op: op, path: path, content: content == null ? null : content });
+        mh.postMessage({ id: id, op: op, path: path, content: content == null ? null : content, query: query == null ? null : query });
       } else if (window.__fileOpMock) {
         // jsdom / test path: a mock services the request synchronously or via promise.
-        Promise.resolve(window.__fileOpMock(op, path, content)).then(resolve);
+        Promise.resolve(window.__fileOpMock(op, path, content, query)).then(resolve);
       } else {
         resolve({ ok: false, error: 'no bridge' });
       }
@@ -2705,11 +2742,24 @@ let editorJS = #"""
   }
   window.__editorSave = saveCurrent;  // exposed for tests
 
+  // Move the caret/scroll of a textarea to a 1-based line and focus it.
+  function revealInTextarea(ta, line){
+    const lines = ta.value.split('\n');
+    let off = 0;
+    for (let i = 0; i < line - 1 && i < lines.length; i++) off += lines[i].length + 1;
+    const len = lines[line - 1] ? lines[line - 1].length : 0;
+    ta.focus();
+    try { ta.setSelectionRange(off, off + len); } catch (e) {}
+    const lh = parseFloat(getComputedStyle(ta).lineHeight) || 18;
+    ta.scrollTop = Math.max(0, (line - 1) * lh - ta.clientHeight / 2);
+  }
+
   function openText(path, text, content){
     const ta = el('textarea', 'editor-source');
     ta.value = text; ta.spellcheck = false;
     ta.addEventListener('input', () => setDirty(ta.value !== current.original));
     current.getText = () => ta.value;
+    current.revealLine = (n) => revealInTextarea(ta, n);
     content.appendChild(ta);
     renderTabbar(path, false);
     ta.focus();
@@ -2733,6 +2783,7 @@ let editorJS = #"""
     ta.addEventListener('input', () => { paint(); setDirty(ta.value !== current.original); });
     ta.addEventListener('scroll', () => { pre.scrollTop = ta.scrollTop; pre.scrollLeft = ta.scrollLeft; });
     current.getText = () => ta.value;
+    current.revealLine = (n) => revealInTextarea(ta, n);
     wrap.appendChild(pre); wrap.appendChild(ta);
     content.appendChild(wrap);
     renderTabbar(path, false);
@@ -2778,10 +2829,12 @@ let editorJS = #"""
     }
     tPrev.addEventListener('click', () => switchTab('preview'));
     tSrc.addEventListener('click', () => switchTab('source'));
+    // Search matches reference source line numbers, so reveal in the Source tab.
+    current.revealLine = (n) => { switchTab('source'); revealInTextarea(ta, n); };
     renderTabbar(path, false);
   }
 
-  async function openFile(path){
+  async function openFile(path, opts){
     const res = await fileOp('readFile', path);
     const content = document.getElementById('editor-content');
     content.innerHTML = '';
@@ -2792,7 +2845,7 @@ let editorJS = #"""
       renderTabbar(null, false);
       return;
     }
-    current = { path: path, original: res.content, dirty: false, getText: null };
+    current = { path: path, original: res.content, dirty: false, getText: null, revealLine: null };
     markActive(path);
     if (MD_EXT.test(path)) {
       openMarkdown(path, res.content, content);
@@ -2801,9 +2854,117 @@ let editorJS = #"""
       if (lang) openCode(path, res.content, content, lang);
       else openText(path, res.content, content);
     }
+    if (opts && opts.line && current.revealLine) current.revealLine(opts.line);
   }
   window.__editorOpenFile = openFile;  // exposed for tests
   window.__editorCurrent = () => current;  // exposed for tests
+
+  // ---- command palette (⌘P quick-open) + content search (⌘⇧F) ----
+  let allFilesCache = null;
+  async function ensureFileList(){
+    if (allFilesCache) return allFilesCache;
+    const res = await fileOp('listAll');
+    allFilesCache = (res && res.ok) ? res.files : [];
+    return allFilesCache;
+  }
+
+  // Subsequence fuzzy match: returns a score (higher = better) or -1 for no match.
+  // Bonuses for adjacency and matching at a path-segment boundary.
+  function fuzzyScore(query, str){
+    query = query.toLowerCase(); str = str.toLowerCase();
+    let qi = 0, score = 0, last = -2;
+    for (let i = 0; i < str.length && qi < query.length; i++) {
+      if (str[i] === query[qi]) {
+        score += (i === last + 1) ? 3 : 1;
+        if (i === 0 || str[i - 1] === '/') score += 4;
+        last = i; qi++;
+      }
+    }
+    return qi === query.length ? score : -1;
+  }
+  window.__editorFuzzyScore = fuzzyScore;  // exposed for tests
+
+  function closeOverlay(){ const ov = document.querySelector('.editor-overlay'); if (ov) ov.remove(); }
+  window.__editorCloseOverlay = closeOverlay;
+  function buildOverlay(id){
+    closeOverlay();
+    const ov = el('div', 'editor-overlay'); ov.id = id;
+    const panel = el('div', 'editor-palette');
+    ov.appendChild(panel);
+    ov.addEventListener('mousedown', (e) => { if (e.target === ov) closeOverlay(); });
+    document.body.appendChild(ov);
+    return panel;
+  }
+
+  async function openQuickOpen(){
+    const panel = buildOverlay('editor-quickopen');
+    const input = el('input', 'editor-palette-input'); input.type = 'text'; input.placeholder = 'Go to file…';
+    const list = el('div', 'editor-palette-list');
+    panel.appendChild(input); panel.appendChild(list);
+    const files = await ensureFileList();
+    let selected = 0, rows = [];
+    function choose(f){ closeOverlay(); openFile(f); }
+    function updateSel(){ rows.forEach((r, i) => r.classList.toggle('selected', i === selected)); if (rows[selected]) rows[selected].scrollIntoView({ block: 'nearest' }); }
+    function render(){
+      const q = input.value.trim();
+      let items = !q ? files.slice(0, 50)
+        : files.map(f => ({ f, s: fuzzyScore(q, f) })).filter(x => x.s >= 0).sort((a, b) => b.s - a.s).slice(0, 50).map(x => x.f);
+      list.innerHTML = ''; rows = [];
+      items.forEach((f, idx) => {
+        const row = el('div', 'editor-palette-row', f);
+        row.dataset.path = f;
+        row.addEventListener('mousedown', (e) => { e.preventDefault(); choose(f); });
+        list.appendChild(row); rows.push(row);
+      });
+      if (selected >= rows.length) selected = Math.max(0, rows.length - 1);
+      updateSel();
+    }
+    input.addEventListener('input', () => { selected = 0; render(); });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); closeOverlay(); }
+      else if (e.key === 'ArrowDown') { e.preventDefault(); selected = Math.min(rows.length - 1, selected + 1); updateSel(); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); selected = Math.max(0, selected - 1); updateSel(); }
+      else if (e.key === 'Enter') { e.preventDefault(); if (rows[selected]) choose(rows[selected].dataset.path); }
+    });
+    render(); input.focus();
+  }
+  window.__editorQuickOpen = openQuickOpen;  // exposed for tests
+
+  async function runFileSearch(query, list){
+    list.innerHTML = '';
+    const q = (query || '').trim();
+    if (!q) return;
+    const res = await fileOp('search', null, null, q);
+    if (!res || !res.ok) { list.appendChild(el('div', 'editor-palette-empty', 'search failed')); return; }
+    if (!res.matches.length) { list.appendChild(el('div', 'editor-palette-empty', 'No matches')); return; }
+    let curFile = null;
+    for (const m of res.matches) {
+      if (m.path !== curFile) { curFile = m.path; list.appendChild(el('div', 'editor-search-file', m.path)); }
+      const row = el('div', 'editor-search-match');
+      row.appendChild(el('span', 'editor-search-line', String(m.line)));
+      row.appendChild(el('span', 'editor-search-text', m.text));
+      row.dataset.path = m.path; row.dataset.line = String(m.line);
+      row.addEventListener('mousedown', (e) => { e.preventDefault(); closeOverlay(); openFile(m.path, { line: m.line }); });
+      list.appendChild(row);
+    }
+    if (res.truncated) list.appendChild(el('div', 'editor-palette-empty', '(results truncated)'));
+  }
+
+  function openSearch(){
+    const panel = buildOverlay('editor-search'); panel.classList.add('editor-search-panel');
+    const input = el('input', 'editor-palette-input'); input.type = 'text'; input.placeholder = 'Search in files…';
+    const list = el('div', 'editor-palette-list editor-search-list');
+    panel.appendChild(input); panel.appendChild(list);
+    let timer = null;
+    input.addEventListener('input', () => { if (timer) clearTimeout(timer); timer = setTimeout(() => runFileSearch(input.value, list), 180); });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); closeOverlay(); }
+      else if (e.key === 'Enter') { e.preventDefault(); if (timer) clearTimeout(timer); runFileSearch(input.value, list); }
+    });
+    input.focus();
+  }
+  window.__editorSearch = openSearch;       // exposed for tests
+  window.__editorRunSearch = runFileSearch;  // exposed for tests
 
   // ---- boot ----
   window.__editorBoot = function(json){
@@ -2816,8 +2977,19 @@ let editorJS = #"""
     renderTree().then(() => { if (info.initialFile) openFile(info.initialFile); });
   };
 
-  // Global Cmd/Ctrl+S to save; Cmd/Ctrl+Enter to submit (comments mode).
+  // Global Cmd/Ctrl+S to save; Cmd/Ctrl+Enter to submit (comments mode);
+  // Cmd/Ctrl+P quick-open; Cmd/Ctrl+Shift+F content search.
   document.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && (e.key === 'p' || e.key === 'P')) {
+      e.preventDefault();
+      openQuickOpen();
+      return;
+    }
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'f' || e.key === 'F')) {
+      e.preventDefault();
+      openSearch();
+      return;
+    }
     if ((e.metaKey || e.ctrlKey) && (e.key === 's' || e.key === 'S')) {
       e.preventDefault();
       saveCurrent();

@@ -238,4 +238,56 @@ if (!submitted || submitted.action !== "submit") { console.error("FAIL: submit d
 if (submitted.file !== "readme.md" || !submitted.comments.some(c => c.body === "needs a rework")) { console.error("FAIL: submit payload missing file/comments:", JSON.stringify(submitted)); process.exit(1); }
 console.log("PASS: Submit returns {action:'submit', file, comments} to the complete bridge");
 
+// 12. ⌘P quick-open palette (listAll + fuzzy filter + open).
+w.__fileOpMock = (op, path, content, query) => {
+  if (op === "listAll") return { ok: true, files: ["readme.md", "other.md", "sub/notes.txt", "data.json"], truncated: false };
+  if (op === "readFile") { const e = FS[path]; return e && e.content != null ? { ok: true, path, content: e.content } : { ok: false, error: "not a file" }; }
+  if (op === "search") {
+    const ql = (query || "").toLowerCase();
+    const matches = [];
+    for (const p in FS) { const e = FS[p]; if (e.content == null) continue;
+      e.content.split("\n").forEach((ln, i) => { if (ln.toLowerCase().includes(ql)) matches.push({ path: p, line: i + 1, text: ln.trim() }); }); }
+    return { ok: true, matches, truncated: false };
+  }
+  if (op === "listDir") { const e = FS[path]; return e && e.dir ? { ok: true, path, entries: e.entries } : { ok: false, error: "not a dir" }; }
+  return { ok: false, error: "unknown op" };
+};
+// fuzzyScore unit checks.
+if (w.__editorFuzzyScore("rdm", "readme.md") < 0) { console.error("FAIL: fuzzy subsequence should match rdm in readme.md"); process.exit(1); }
+if (w.__editorFuzzyScore("zzz", "readme.md") !== -1) { console.error("FAIL: fuzzy non-subsequence should be -1"); process.exit(1); }
+await w.__editorQuickOpen();
+await tick();
+const qoInput = w.document.querySelector(".editor-overlay .editor-palette-input");
+if (!qoInput) { console.error("FAIL: quick-open palette did not render an input"); process.exit(1); }
+if (w.document.querySelectorAll(".editor-overlay .editor-palette-row").length < 4) { console.error("FAIL: quick-open did not list all files"); process.exit(1); }
+qoInput.value = "notes";
+qoInput.dispatchEvent(new w.Event("input", { bubbles: true }));
+const qoRows = Array.from(w.document.querySelectorAll(".editor-overlay .editor-palette-row"));
+if (!qoRows.length || !qoRows.every(r => /notes|sub/.test(r.dataset.path))) { console.error("FAIL: quick-open filter wrong:", qoRows.map(r => r.dataset.path)); process.exit(1); }
+const notesRowQO = qoRows.find(r => r.dataset.path === "sub/notes.txt");
+notesRowQO.dispatchEvent(new w.Event("mousedown", { bubbles: true }));
+await tick(); await tick();
+if (w.document.querySelector(".editor-overlay")) { console.error("FAIL: palette did not close on choose"); process.exit(1); }
+if (w.__editorCurrent().path !== "sub/notes.txt") { console.error("FAIL: quick-open did not open the chosen file; current:", w.__editorCurrent().path); process.exit(1); }
+console.log("PASS: ⌘P quick-open lists files, fuzzy-filters, and opens the choice");
+
+// 13. ⌘⇧F content search (search op + grouped results + open-at-line).
+w.__editorSearch();
+await tick();
+const sInput = w.document.querySelector(".editor-overlay .editor-palette-input");
+if (!sInput) { console.error("FAIL: search panel did not render"); process.exit(1); }
+const sList = w.document.querySelector(".editor-overlay .editor-search-list");
+await w.__editorRunSearch("body", sList);   // matches readme.md "Edited body." + other.md? only readme
+await tick();
+const sMatches = Array.from(w.document.querySelectorAll(".editor-overlay .editor-search-match"));
+if (!sMatches.length) { console.error("FAIL: search produced no match rows for 'body'"); process.exit(1); }
+if (!w.document.querySelector(".editor-overlay .editor-search-file")) { console.error("FAIL: search results not grouped by file"); process.exit(1); }
+const firstMatch = sMatches[0];
+const wantPath = firstMatch.dataset.path, wantLine = firstMatch.dataset.line;
+firstMatch.dispatchEvent(new w.Event("mousedown", { bubbles: true }));
+await tick(); await tick();
+if (w.document.querySelector(".editor-overlay")) { console.error("FAIL: search panel did not close on match click"); process.exit(1); }
+if (w.__editorCurrent().path !== wantPath) { console.error("FAIL: clicking a match did not open its file; want", wantPath, "got", w.__editorCurrent().path); process.exit(1); }
+console.log(`PASS: ⌘⇧F search greps, groups by file, and opens a match (${wantPath}:${wantLine})`);
+
 console.log("All editor runtime smoke checks pass");
