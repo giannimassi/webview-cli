@@ -58,6 +58,8 @@ const FS = {
   "readme.md": { content: "# Title\n\nBody **bold**.\n" },
   "data.json": { content: '{\n  "a": 1\n}\n' },
   "sub/notes.txt": { content: "alpha\nbeta\n" },
+  "links.md": { content: "[ext](https://example.com/x) and [int](other.md) and [up](sub/notes.txt)\n" },
+  "other.md": { content: "# Other doc\n\nReached via link.\n" },
 };
 w.__fileOpMock = (op, path, content) => {
   if (op === "listDir") { const e = FS[path]; return e && e.dir ? { ok: true, path, entries: e.entries } : { ok: false, error: "not a dir" }; }
@@ -160,5 +162,40 @@ w.highlightCodeBlocks(mdc);
 const fenced = mdc.querySelector("pre > code.hl");
 if (!fenced || !fenced.querySelector(".hl-kw")) { console.error("FAIL: fenced code block not highlighted:", mdc.innerHTML); process.exit(1); }
 console.log("PASS: fenced code blocks in markdown preview are highlighted");
+
+// 9. Link following.
+// Restore the real fileOp mock (test 6 replaced it with a reject-all).
+w.__fileOpMock = (op, path, content) => {
+  if (op === "listDir") { const e = FS[path]; return e && e.dir ? { ok: true, path, entries: e.entries } : { ok: false, error: "not a dir" }; }
+  if (op === "readFile") { const e = FS[path]; return e && e.content != null ? { ok: true, path, content: e.content } : { ok: false, error: "not a file" }; }
+  if (op === "writeFile") { FS[path] = { content }; return { ok: true, path }; }
+  return { ok: false, error: "unknown op" };
+};
+// resolvePath unit checks.
+if (w.__editorResolvePath("sub/doc.md", "../other.md") !== "other.md") { console.error("FAIL: resolvePath ../ wrong:", w.__editorResolvePath("sub/doc.md", "../other.md")); process.exit(1); }
+if (w.__editorResolvePath("readme.md", "sub/x.md") !== "sub/x.md") { console.error("FAIL: resolvePath sibling-dir wrong"); process.exit(1); }
+if (w.__editorResolvePath("a/b/c.md", "./d.md") !== "a/b/d.md") { console.error("FAIL: resolvePath ./ wrong"); process.exit(1); }
+console.log("PASS: resolvePath collapses ./ and ../ against the current file dir");
+
+// External link → openExternal bridge, NOT a file open.
+let externalOpened = null;
+w.__openExternalMock = (url) => { externalOpened = url; };
+w.__editorHandleLink("https://example.com/x", "links.md");
+await tick();
+if (externalOpened !== "https://example.com/x") { console.error("FAIL: external link did not reach openExternal:", externalOpened); process.exit(1); }
+console.log("PASS: external http link routes to openExternal bridge");
+
+// Internal link → opens the target file in the editor.
+await w.__editorOpenFile("links.md");
+await tick();
+const anchors = Array.from(w.document.querySelectorAll(".editor-md-preview a"));
+const intLink = anchors.find(a => a.getAttribute("href") === "other.md");
+if (!intLink) { console.error("FAIL: rendered preview missing internal link; anchors:", anchors.map(a => a.getAttribute("href"))); process.exit(1); }
+intLink.dispatchEvent(new w.Event("click", { bubbles: true }));
+await tick(); await tick();
+if (w.__editorCurrent().path !== "other.md") { console.error("FAIL: clicking internal link did not open other.md; current:", w.__editorCurrent().path); process.exit(1); }
+const otherH1 = w.document.querySelector(".editor-md-preview h1");
+if (!otherH1 || otherH1.textContent !== "Other doc") { console.error("FAIL: other.md not rendered after link click"); process.exit(1); }
+console.log("PASS: clicking an internal markdown link opens the target file");
 
 console.log("All editor runtime smoke checks pass");

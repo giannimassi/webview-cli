@@ -2390,6 +2390,44 @@ let editorJS = #"""
     return e;
   }
 
+  // ---- link handling ----
+  function openExternal(url){
+    const mh = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.openExternal;
+    if (mh) mh.postMessage({ url: url });
+    else if (window.__openExternalMock) window.__openExternalMock(url);
+  }
+
+  // Resolve a relative href against the directory of `fromFile` (POSIX-style,
+  // collapsing . and ..). The Swift FileService re-checks scoping, so an
+  // escaping result simply fails to open rather than reaching outside root.
+  function resolvePath(fromFile, rel){
+    const baseParts = (fromFile || '').split('/');
+    baseParts.pop();  // drop the filename, keep the directory
+    if (rel.charAt(0) === '/') { baseParts.length = 0; rel = rel.slice(1); }  // root-relative
+    for (const p of rel.split('/')) {
+      if (p === '' || p === '.') continue;
+      if (p === '..') { if (baseParts.length) baseParts.pop(); }
+      else baseParts.push(p);
+    }
+    return baseParts.join('/');
+  }
+  window.__editorResolvePath = resolvePath;  // exposed for tests
+
+  function handleLink(href, fromFile){
+    if (!href) return;
+    if (href.charAt(0) === '#') return;  // in-page anchor — let the browser handle
+    if (/^[a-z][a-z0-9+.-]*:/i.test(href)) {
+      // Has a scheme → external. Only http(s) are opened in the system browser.
+      const scheme = href.slice(0, href.indexOf(':')).toLowerCase();
+      if (scheme === 'http' || scheme === 'https') openExternal(href);
+      return;
+    }
+    // Relative path → open in the editor (strip any #fragment / ?query first).
+    const clean = href.split('#')[0].split('?')[0];
+    if (clean) openFile(resolvePath(fromFile, clean));
+  }
+  window.__editorHandleLink = handleLink;  // exposed for tests
+
   // ---- file tree (lazy-expanding) ----
   const expanded = new Set();
   async function buildTreeLevel(path, container, depth){
@@ -2510,6 +2548,15 @@ let editorJS = #"""
     const preview = el('div', 'editor-md-preview a2ui-markdown-preview');
     const ta = el('textarea', 'editor-source'); ta.value = text; ta.spellcheck = false; ta.style.display = 'none';
     content.appendChild(preview); content.appendChild(ta);
+    // Intercept link clicks: external → system browser, internal → open in editor.
+    // Without this, a relative href resolves to agent://host/... and WKWebView
+    // would try to navigate, blowing away the renderer.
+    preview.addEventListener('click', (e) => {
+      const a = e.target.closest('a');
+      if (!a) return;
+      e.preventDefault();
+      handleLink(a.getAttribute('href') || '', path);
+    });
     function rerender(){
       if (window.renderMarkdown) window.renderMarkdown(ta.value, preview, {});
       if (window.highlightCodeBlocks) window.highlightCodeBlocks(preview);
