@@ -11,23 +11,25 @@ The binary **blocks** until the user interacts with the window, the window is cl
 ## Command-line arguments
 
 ```
-webview-cli [--url <url>] [--a2ui] [--markdown] [options]
+webview-cli [--url <url>] [--a2ui] [--markdown] [--editor <path>] [options]
 
 Options:
-  --url <url>        URL to open (http/https/file/agent). Required unless --a2ui or --markdown.
+  --url <url>        URL to open (http/https/file/agent). Required unless --a2ui/--markdown/--editor.
   --a2ui             A2UI mode: read A2UI v0.8 JSONL from stdin and render.
   --markdown         Markdown mode: read markdown from stdin and render with optional review UI.
+  --editor <path>    Editor mode: open a file or directory with a file tree, syntax
+                     highlighting, markdown preview + link following. Edits save in place.
   --title <string>   Window title (default: "webview-cli")
   --width <int>      Window width in pixels (default: 1024)
   --height <int>     Window height in pixels (default: 768)
   --timeout <int>    Auto-close after N seconds. 0 = no timeout (default: 0).
-  --comments         Enable comment UI (inline + doc-level). Requires --markdown. Default: false.
+  --comments         Enable comment UI (inline + doc-level). Used with --markdown or --editor. Default: false.
   --edits            Enable source editor tab. Requires --markdown. Default: false.
   --allow-html       Pass raw HTML through. Default strips <script>/<iframe>/handlers. Default: false.
   --help, -h         Show usage and exit.
 ```
 
-**Note:** `--markdown`, `--a2ui`, and `--url` are mutually exclusive. Exactly one must be specified.
+**Note:** `--markdown`, `--a2ui`, `--editor`, and `--url` are mutually exclusive. Exactly one must be specified.
 
 ## Stdin protocol
 
@@ -55,6 +57,33 @@ The markdown parser supports CommonMark core: headings, paragraphs, lists, empha
 When `--comments` is on, the rendered preview includes inline comment anchors on each block (paragraph, heading, list item, etc.). When `--edits` is on, the window shows a Preview tab (rendered markdown) and a Source tab (editable textarea with markdown source).
 
 See [Markdown mode](#markdown-mode) below for the full interaction model and output shape.
+
+### `--editor` mode
+
+Opens `<path>` as a text editor. If `<path>` is a file, its parent directory becomes the tree root and the file is selected on launch. The window stays open; edits save to disk on `⌘S`. Closing the window exits with `cancelled` (no auto-save).
+
+```bash
+webview-cli --editor ./docs --title "Docs" --timeout 0
+webview-cli --editor ./notes/spec.md --comments   # review flow: Submit returns JSON
+```
+
+All filesystem access is scoped to the resolved root — paths containing `../` or symlinks that resolve outside the root are rejected.
+
+**File-I/O bridge.** The editor JS talks to the binary over a `fileOp` `WKScriptMessageHandler`: it posts `{id, op, path, content?}` and the binary replies via `window.__fileOpReply(id, <json>)`. `op` is one of `listDir` / `readFile` / `writeFile`. The same operations are driveable on **stdin** for scripting and tests — emit one `fileop` command and the binary prints the result to stdout and exits:
+
+```bash
+echo '{"type":"fileop","op":"listDir","path":""}'                       | webview-cli --editor ./docs --timeout 3
+echo '{"type":"fileop","op":"readFile","path":"readme.md"}'             | webview-cli --editor ./docs --timeout 3
+echo '{"type":"fileop","op":"writeFile","path":"a.txt","content":"hi"}' | webview-cli --editor ./docs --timeout 3
+```
+
+| `op` | Fields | Result `data` |
+|------|--------|---------------|
+| `listDir` | `path` (relative to root, `""` = root) | `{ok, path, entries:[{name, path, type:"dir"\|"file"}]}` — dirs first, dotfiles hidden |
+| `readFile` | `path` | `{ok, path, content}` — UTF-8 only, 4MB cap; `{ok:false, binary:true}` otherwise |
+| `writeFile` | `path`, `content` | `{ok, path}` (atomic write) |
+
+Any escaping path returns `{ok:false, error:"path escapes root"}`. With `--comments`, the **Submit** action posts `{action:"submit", file, edited_text, comments}` through the standard `complete` bridge (see [Stdout contract](#stdout-contract)) and exits — identical in shape to `--markdown --comments`.
 
 ### `agent://` scheme (URL mode)
 
