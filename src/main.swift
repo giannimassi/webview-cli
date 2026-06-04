@@ -327,12 +327,76 @@ struct FileService {
         }
     }
 
+    // Directories skipped when walking the whole tree (⌘P quick-open + ⌘⇧F search).
+    // Dotfiles/dot-dirs are skipped separately. These are the big non-dot dirs.
+    static let skipDirs: Set<String> = ["node_modules", "vendor", "dist", "build", ".next", "target", "Pods", "DerivedData"]
+    static let maxWalkFiles = 5000
+    static let maxSearchResults = 500
+    static let maxSearchFileBytes = 1_000_000
+
+    /// Depth-first walk of all files under root (dotfiles + heavy build dirs
+    /// skipped), capped at `limit` to keep large trees responsive.
+    func walkFiles(limit: Int) -> [URL] {
+        var out: [URL] = []
+        var stack: [URL] = [root]
+        while let dir = stack.popLast(), out.count < limit {
+            guard let names = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else { continue }
+            for name in names.sorted(by: >) {  // reversed so DFS pops in alphabetical order
+                if name.hasPrefix(".") { continue }
+                let child = dir.appendingPathComponent(name)
+                var isDir: ObjCBool = false
+                FileManager.default.fileExists(atPath: child.path, isDirectory: &isDir)
+                if isDir.boolValue {
+                    if FileService.skipDirs.contains(name) { continue }
+                    stack.append(child)
+                } else {
+                    out.append(child)
+                    if out.count >= limit { break }
+                }
+            }
+        }
+        return out
+    }
+
+    /// Flat list of every file path under root (relative), for ⌘P quick-open.
+    func listAll() -> [String: Any] {
+        let files = walkFiles(limit: FileService.maxWalkFiles).map { relPath($0) }.sorted()
+        return ["ok": true, "files": files, "truncated": files.count >= FileService.maxWalkFiles]
+    }
+
+    /// Case-insensitive substring grep across all text files under root, for
+    /// ⌘⇧F. Returns {path, line (1-based), text}. Skips binary/oversized files.
+    func search(query: String) -> [String: Any] {
+        let q = query.lowercased()
+        if q.isEmpty { return ["ok": true, "matches": [], "truncated": false] }
+        var matches: [[String: Any]] = []
+        for file in walkFiles(limit: FileService.maxWalkFiles) {
+            if matches.count >= FileService.maxSearchResults { break }
+            guard let data = try? Data(contentsOf: file), data.count <= FileService.maxSearchFileBytes,
+                  let content = String(data: data, encoding: .utf8) else { continue }
+            let rel = relPath(file)
+            var lineNo = 0
+            for line in content.split(separator: "\n", omittingEmptySubsequences: false) {
+                lineNo += 1
+                if String(line).lowercased().contains(q) {
+                    var text = String(line).trimmingCharacters(in: .whitespaces)
+                    if text.count > 200 { text = String(text.prefix(200)) }
+                    matches.append(["path": rel, "line": lineNo, "text": text])
+                    if matches.count >= FileService.maxSearchResults { break }
+                }
+            }
+        }
+        return ["ok": true, "matches": matches, "truncated": matches.count >= FileService.maxSearchResults]
+    }
+
     /// Dispatch a parsed operation dict to the right method.
-    func perform(op: String, path: String, content: String?) -> [String: Any] {
+    func perform(op: String, path: String, content: String?, query: String?) -> [String: Any] {
         switch op {
         case "listDir": return listDir(path)
         case "readFile": return readFile(path)
         case "writeFile": return writeFile(path, content: content ?? "")
+        case "listAll": return listAll()
+        case "search": return search(query: query ?? "")
         default: return ["ok": false, "error": "unknown op: \(op)"]
         }
     }
@@ -559,9 +623,9 @@ class AppCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NS
     }
 
     /// Run a file operation and return the JSON-serializable result dict.
-    func runFileOp(op: String, path: String, content: String?) -> [String: Any] {
+    func runFileOp(op: String, path: String, content: String?, query: String?) -> [String: Any] {
         guard let fs = fileService else { return ["ok": false, "error": "no file service"] }
-        return fs.perform(op: op, path: path, content: content)
+        return fs.perform(op: op, path: path, content: content, query: query)
     }
 
     /// Reply to a `fileOp` JS request by calling window.__fileOpReply(id, json).
@@ -742,7 +806,8 @@ class AppCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NS
             let op = json["op"] as? String ?? ""
             let path = json["path"] as? String ?? ""
             let content = json["content"] as? String
-            let result = runFileOp(op: op, path: path, content: content)
+            let query = json["query"] as? String
+            let result = runFileOp(op: op, path: path, content: content, query: query)
             emitAndExit(status: "fileop", data: result, code: 0)
         case "close":
             emitAndExit(status: "cancelled", code: 1)
@@ -777,7 +842,8 @@ class AppCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NS
             let op = body["op"] as? String ?? ""
             let path = body["path"] as? String ?? ""
             let content = body["content"] as? String
-            let result = runFileOp(op: op, path: path, content: content)
+            let query = body["query"] as? String
+            let result = runFileOp(op: op, path: path, content: content, query: query)
             replyFileOp(id: id, result: result)
         case "openExternal":
             if let body = message.body as? [String: Any],

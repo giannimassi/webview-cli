@@ -62,4 +62,29 @@ OUT="$("$BIN" --editor "$TMP/does-not-exist" --timeout 3 2>/dev/null)"
 echo "$OUT" | grep -q '"status":"error"' || fail "missing root did not error: $OUT"
 echo "PASS: editor missing root emits error"
 
+# 7. listAll returns a flat recursive file list (for ⌘P quick-open).
+printf 'needle one\n' > "$TMP/sub/deep.txt"
+OUT="$(op '{"type":"fileop","op":"listAll"}')"
+echo "$OUT" | grep -q '"ok":true' || fail "listAll not ok: $OUT"
+echo "$OUT" | grep -q 'readme.md' || fail "listAll missing top file: $OUT"
+echo "$OUT" | grep -q 'deep.txt' || fail "listAll missing nested file: $OUT"
+echo "$OUT" | grep -q '.hidden' && fail "listAll leaked dotfile: $OUT"
+echo "PASS: editor listAll returns flat recursive file list"
+
+# 8. search greps file contents across the tree, case-insensitive, with line numbers.
+printf 'Needle in caps\n' > "$TMP/sub/notes.txt"
+OUT="$(op '{"type":"fileop","op":"search","query":"needle"}')"
+echo "$OUT" | grep -q '"ok":true' || fail "search not ok: $OUT"
+echo "$OUT" | grep -q 'deep.txt' || fail "search missed lowercase match: $OUT"
+echo "$OUT" | grep -q 'notes.txt' || fail "search missed case-insensitive match: $OUT"
+echo "$OUT" | grep -q '"line":1' || fail "search missing line number: $OUT"
+echo "PASS: editor search greps contents case-insensitively with line numbers"
+
+# 9. search is scoped — it never reads outside the root.
+echo 'needle' > "$TMP/../outside-needle.txt" 2>/dev/null || true
+OUT="$(op '{"type":"fileop","op":"search","query":"needle"}')"
+echo "$OUT" | grep -q 'outside-needle' && fail "search leaked a match from outside root: $OUT"
+rm -f "$TMP/../outside-needle.txt" 2>/dev/null || true
+echo "PASS: editor search stays within root"
+
 echo "All editor smoke tests pass"
