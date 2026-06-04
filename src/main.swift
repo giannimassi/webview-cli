@@ -545,7 +545,8 @@ class AppCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NS
         let initialFile = isDir.boolValue ? "" : fs.relPath(target)
         let info: [String: Any] = [
             "root": fs.root.lastPathComponent,
-            "initialFile": initialFile
+            "initialFile": initialFile,
+            "comments": config.comments
         ]
         if let data = try? JSONSerialization.data(withJSONObject: info),
            let json = String(data: data, encoding: .utf8) {
@@ -2233,6 +2234,38 @@ html, body { height: 100%; padding: 0; margin: 0; overflow: hidden; }
   caret-color: var(--text); -webkit-text-fill-color: transparent;
 }
 .editor-code-input:focus { outline: none; }
+
+/* frontmatter metadata block */
+.editor-md-frontmatter {
+  border: 1px solid var(--border); border-radius: 6px; background: var(--surface);
+  padding: 8px 12px; margin-bottom: 14px; font-size: 12px;
+}
+.editor-fm-row { display: flex; gap: 8px; padding: 2px 0; }
+.editor-fm-key { color: var(--muted); font-weight: 600; min-width: 90px; }
+.editor-fm-val { color: var(--text); word-break: break-word; }
+
+/* submit button + comment composer */
+.editor-tab-btn.submit-btn { background: var(--accent); color: #fff; border-color: transparent; }
+.a2ui-markdown-preview [data-has-comment], .editor-md-preview [data-has-comment] {
+  background: rgba(255,193,7,0.08); border-left: 2px solid #ffc107; padding-left: 6px;
+}
+.editor-comment-composer {
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px;
+  padding: 8px; margin: 6px 0;
+}
+.editor-comment-body {
+  width: 100%; padding: 6px; border: 1px solid var(--border); border-radius: 5px;
+  background: var(--bg); color: var(--text); font: 12px/1.5 Monaco, monospace;
+  resize: vertical; min-height: 54px; margin-bottom: 6px;
+}
+.editor-comment-body:focus { outline: none; border-color: var(--accent); }
+.editor-comment-actions { display: flex; gap: 6px; justify-content: flex-end; }
+.editor-comment-actions button {
+  padding: 4px 12px; font-size: 11px; border: 1px solid var(--border); border-radius: 5px;
+  background: var(--surface); color: var(--text); cursor: pointer;
+}
+.editor-comment-actions button.save { background: var(--success); color: #1a1a1c; border-color: transparent; }
+.editor-comment-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
 """#
 
 // Compact, dependency-free syntax highlighter. A single generic scanner is
@@ -2428,6 +2461,94 @@ let editorJS = #"""
   }
   window.__editorHandleLink = handleLink;  // exposed for tests
 
+  // ---- frontmatter (rendered as a metadata block, not vanished) ----
+  // renderMarkdown strips the YAML frontmatter from the preview body; we
+  // surface it here as a key/value block pinned to the top of the preview.
+  function renderFrontmatterInto(text, preview){
+    const m = /^---\r?\n([\s\S]*?)\r?\n---(\r?\n|$)/.exec(text);
+    if (!m) return;
+    const box = el('div', 'editor-md-frontmatter');
+    for (const line of m[1].split(/\r?\n/)) {
+      const idx = line.indexOf(':');
+      if (idx < 0) continue;
+      const key = line.slice(0, idx).trim();
+      if (!key) continue;
+      const row = el('div', 'editor-fm-row');
+      row.appendChild(el('span', 'editor-fm-key', key));
+      row.appendChild(el('span', 'editor-fm-val', line.slice(idx + 1).trim()));
+      box.appendChild(row);
+    }
+    if (box.children.length) preview.insertBefore(box, preview.firstChild);
+  }
+  window.__editorRenderFrontmatter = renderFrontmatterInto;  // exposed for tests
+
+  // ---- comments + submit (preserves the markdown-review return-to-Claude flow) ----
+  let COMMENTS = false;
+  const fileComments = {};  // path -> [ {source_line_start, source_line_end, quoted_text, body} ]
+  function commentsFor(path){ return fileComments[path] || (fileComments[path] = []); }
+  function allComments(){
+    const out = [];
+    for (const p in fileComments) for (const c of fileComments[p]) out.push(Object.assign({ file: p }, c));
+    return out;
+  }
+  window.__editorAllComments = allComments;  // exposed for tests
+
+  function openComposer(block, path, preview){
+    if (preview.querySelector('.editor-comment-composer')) preview.querySelector('.editor-comment-composer').remove();
+    const startLine = parseInt(block.dataset.srcStart, 10);
+    const endLine = parseInt(block.dataset.srcEnd, 10);
+    let quoted = (block.textContent || '').trim().split('\n')[0];
+    if (quoted.length > 200) quoted = quoted.slice(0, 200);
+    const composer = el('div', 'editor-comment-composer');
+    const ta = el('textarea', 'editor-comment-body'); ta.placeholder = 'Add a comment…';
+    composer.appendChild(ta);
+    const actions = el('div', 'editor-comment-actions');
+    const cancel = el('button', null, 'Cancel');
+    cancel.addEventListener('click', () => composer.remove());
+    const save = el('button', 'save', 'Save'); save.disabled = true;
+    ta.addEventListener('input', () => { save.disabled = !ta.value.trim(); });
+    ta.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); composer.remove(); }
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !save.disabled) { e.preventDefault(); save.click(); }
+    });
+    save.addEventListener('click', () => {
+      const body = ta.value.trim(); if (!body) return;
+      commentsFor(path).push({ source_line_start: startLine, source_line_end: endLine, quoted_text: quoted, body: body });
+      block.setAttribute('data-has-comment', 'true');
+      composer.remove();
+      renderTabbar(current.path, current.dirty);  // refresh Submit count
+    });
+    actions.appendChild(cancel); actions.appendChild(save);
+    composer.appendChild(actions);
+    block.insertAdjacentElement('afterend', composer);
+    ta.focus();
+  }
+  window.__editorOpenComposer = openComposer;  // exposed for tests
+
+  function attachComments(preview, path){
+    preview.addEventListener('click', (e) => {
+      if (e.target.closest('a')) return;                       // links win
+      if (e.target.closest('.editor-comment-composer')) return;
+      const sel = window.getSelection && window.getSelection();
+      if (sel && !sel.isCollapsed && sel.toString().trim()) return;  // don't hijack selection
+      const block = e.target.closest('[data-src-start]');
+      if (block) openComposer(block, path, preview);
+    });
+  }
+
+  function submitToClaude(){
+    const payload = {
+      action: 'submit',
+      file: current.path,
+      edited_text: current.getText ? current.getText() : '',
+      comments: allComments()
+    };
+    const mh = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.complete;
+    if (mh) mh.postMessage(payload);
+    else if (window.__completeMock) window.__completeMock(payload);
+  }
+  window.__editorSubmit = submitToClaude;  // exposed for tests
+
   // ---- file tree (lazy-expanding) ----
   const expanded = new Set();
   async function buildTreeLevel(path, container, depth){
@@ -2492,6 +2613,13 @@ let editorJS = #"""
     save.disabled = !dirty;
     save.addEventListener('click', saveCurrent);
     bar.appendChild(save);
+    if (COMMENTS) {
+      const n = allComments().length;
+      const submit = el('button', 'editor-tab-btn submit-btn', 'Submit' + (n ? ' (' + n + ')' : ''));
+      submit.title = 'Submit comments to Claude and close (⌘↵)';
+      submit.addEventListener('click', submitToClaude);
+      bar.appendChild(submit);
+    }
   }
 
   function setDirty(d){ current.dirty = d; renderTabbar(current.path, d); }
@@ -2560,8 +2688,10 @@ let editorJS = #"""
     function rerender(){
       if (window.renderMarkdown) window.renderMarkdown(ta.value, preview, {});
       if (window.highlightCodeBlocks) window.highlightCodeBlocks(preview);
+      renderFrontmatterInto(ta.value, preview);
     }
     rerender();
+    if (COMMENTS) attachComments(preview, path);
     ta.addEventListener('input', () => setDirty(ta.value !== current.original));
     current.getText = () => ta.value;
     function switchTab(name){
@@ -2608,16 +2738,23 @@ let editorJS = #"""
     let info;
     try { info = JSON.parse(json); } catch(e) { info = {}; }
     ROOT = info.root || '';
+    COMMENTS = info.comments === true;
     const rn = document.getElementById('editor-root-name');
     if (rn) rn.textContent = ROOT || '/';
     renderTree().then(() => { if (info.initialFile) openFile(info.initialFile); });
   };
 
-  // Global Cmd/Ctrl+S to save.
+  // Global Cmd/Ctrl+S to save; Cmd/Ctrl+Enter to submit (comments mode).
   document.addEventListener('keydown', (e) => {
     if ((e.metaKey || e.ctrlKey) && (e.key === 's' || e.key === 'S')) {
       e.preventDefault();
       saveCurrent();
+    }
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && COMMENTS) {
+      // Let an open comment composer handle its own Cmd+Enter (save comment).
+      if (document.activeElement && document.activeElement.classList.contains('editor-comment-body')) return;
+      e.preventDefault();
+      submitToClaude();
     }
   });
 })();

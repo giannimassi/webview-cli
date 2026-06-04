@@ -60,6 +60,7 @@ const FS = {
   "sub/notes.txt": { content: "alpha\nbeta\n" },
   "links.md": { content: "[ext](https://example.com/x) and [int](other.md) and [up](sub/notes.txt)\n" },
   "other.md": { content: "# Other doc\n\nReached via link.\n" },
+  "fm.md": { content: "---\ntitle: My Doc\ntags: a, b\n---\n\n# Real Heading\n\nBody para.\n" },
 };
 w.__fileOpMock = (op, path, content) => {
   if (op === "listDir") { const e = FS[path]; return e && e.dir ? { ok: true, path, entries: e.entries } : { ok: false, error: "not a dir" }; }
@@ -197,5 +198,44 @@ if (w.__editorCurrent().path !== "other.md") { console.error("FAIL: clicking int
 const otherH1 = w.document.querySelector(".editor-md-preview h1");
 if (!otherH1 || otherH1.textContent !== "Other doc") { console.error("FAIL: other.md not rendered after link click"); process.exit(1); }
 console.log("PASS: clicking an internal markdown link opens the target file");
+
+// 10. Frontmatter rendered as a metadata block (not as body, not vanished).
+await w.__editorOpenFile("fm.md");
+await tick();
+const fmBox = w.document.querySelector(".editor-md-preview .editor-md-frontmatter");
+if (!fmBox) { console.error("FAIL: frontmatter metadata block missing"); process.exit(1); }
+const fmKeys = Array.from(fmBox.querySelectorAll(".editor-fm-key")).map(k => k.textContent);
+if (!fmKeys.includes("title") || !fmKeys.includes("tags")) { console.error("FAIL: frontmatter keys missing:", fmKeys); process.exit(1); }
+const fmH1 = w.document.querySelector(".editor-md-preview h1");
+if (!fmH1 || fmH1.textContent !== "Real Heading") { console.error("FAIL: body heading wrong (frontmatter leaked into body?):", fmH1 && fmH1.textContent); process.exit(1); }
+console.log("PASS: frontmatter surfaced as metadata block; body heading intact");
+
+// 11. Comment + submit flow (--comments) preserves the return-to-Claude path.
+w.__editorBoot(JSON.stringify({ root: "edroot", initialFile: "", comments: true }));
+await tick(); await tick();
+await w.__editorOpenFile("readme.md");
+await tick();
+const submitBtn = Array.from(w.document.querySelectorAll("#editor-tabbar .editor-tab-btn")).find(b => /Submit/.test(b.textContent));
+if (!submitBtn) { console.error("FAIL: --comments did not add a Submit button"); process.exit(1); }
+const cblock = w.document.querySelector(".editor-md-preview [data-src-start]");
+if (!cblock) { console.error("FAIL: no commentable block in preview"); process.exit(1); }
+w.__editorOpenComposer(cblock, "readme.md", w.document.querySelector(".editor-md-preview"));
+const cbody = w.document.querySelector(".editor-comment-composer .editor-comment-body");
+cbody.value = "needs a rework";
+cbody.dispatchEvent(new w.Event("input", { bubbles: true }));
+const csave = w.document.querySelector(".editor-comment-composer .save");
+if (csave.disabled) { console.error("FAIL: Save still disabled after typing a comment"); process.exit(1); }
+csave.dispatchEvent(new w.Event("click", { bubbles: true }));
+await tick();
+if (w.__editorAllComments().length < 1 || w.__editorAllComments()[0].body !== "needs a rework") { console.error("FAIL: comment not recorded:", w.__editorAllComments()); process.exit(1); }
+if (!cblock.getAttribute("data-has-comment")) { console.error("FAIL: commented block not marked"); process.exit(1); }
+console.log("PASS: comment composer records a comment and marks the block");
+
+let submitted = null;
+w.__completeMock = (p) => { submitted = p; };
+w.__editorSubmit();
+if (!submitted || submitted.action !== "submit") { console.error("FAIL: submit did not emit a submit action:", submitted); process.exit(1); }
+if (submitted.file !== "readme.md" || !submitted.comments.some(c => c.body === "needs a rework")) { console.error("FAIL: submit payload missing file/comments:", JSON.stringify(submitted)); process.exit(1); }
+console.log("PASS: Submit returns {action:'submit', file, comments} to the complete bridge");
 
 console.log("All editor runtime smoke checks pass");
