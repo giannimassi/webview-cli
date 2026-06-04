@@ -813,13 +813,19 @@ class AppCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NS
             decisionHandler(.allow); return
         }
         let scheme = url.scheme?.lowercased() ?? ""
-        // Allow the renderer's own agent:// resources and the initial load.
-        if scheme == "agent" || scheme == "about" {
+        // Allow ONLY the initial renderer document (agent://host/index.html) and
+        // about: pages. Subresources (editor.js, styles.css, ...) load as
+        // subresource requests and never reach this navigation hook, so they're
+        // unaffected. Critically, we do NOT blanket-allow agent:// — a relative
+        // markdown link that slipped past the JS click handler would resolve to
+        // agent://host/<file>, 404 in the scheme handler, and fail-navigate the
+        // whole editor closed. Cancelling it keeps the editor alive; the JS
+        // handleLink path is what actually opens internal links.
+        if scheme == "about" || (scheme == "agent" && (url.path == "/index.html" || url.path == "/" || url.path.isEmpty)) {
             decisionHandler(.allow); return
         }
-        // Anything else (http/https/file) must NOT navigate the webview — that
-        // would blow away the editor. External links are opened by the JS
-        // openExternal bridge; internal links are routed through openFile.
+        // Everything else must NOT navigate the webview. External links open in
+        // the system browser; internal links are handled by the JS openFile path.
         if scheme == "http" || scheme == "https" {
             NSWorkspace.shared.open(url)
         }
