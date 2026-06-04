@@ -2211,14 +2211,142 @@ html, body { height: 100%; padding: 0; margin: 0; overflow: hidden; }
 .editor-md-tab:hover { color: var(--text); }
 .editor-md-tab.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
 .editor-md-preview { flex: 1; overflow: auto; }
+
+/* syntax highlight tokens (shared by code editor + fenced markdown blocks) */
+.hl-kw { color: #ff7ab2; }
+.hl-str { color: #9ee37d; }
+.hl-num { color: #d0a0ff; }
+.hl-com { color: #6d7686; font-style: italic; }
+
+/* code editor: a highlighted <pre> behind a transparent-text <textarea> */
+.editor-code { position: relative; flex: 1; min-height: 200px; overflow: hidden; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
+.editor-code-hl, .editor-code-input {
+  margin: 0; padding: 10px 12px; border: 0;
+  font: 13px/1.6 'SF Mono', Monaco, Menlo, 'Courier New', monospace;
+  tab-size: 4; white-space: pre; word-wrap: normal;
+  position: absolute; inset: 0; overflow: auto;
+}
+.editor-code-hl { color: var(--text); pointer-events: none; z-index: 1; }
+.editor-code-hl code { font: inherit; }
+.editor-code-input {
+  z-index: 2; resize: none; background: transparent; color: transparent;
+  caret-color: var(--text); -webkit-text-fill-color: transparent;
+}
+.editor-code-input:focus { outline: none; }
 """#
 
-// Syntax highlighter — populated in a later slice. Stub returns null so callers
-// fall back to plain (escaped) text until the real tokenizer lands.
+// Compact, dependency-free syntax highlighter. A single generic scanner is
+// driven by a per-language config (keyword set, comment delimiters, string
+// quotes). Returns an HTML string of escaped text with <span class="hl-*">
+// wrappers, or null for an unknown language (caller falls back to plain text).
+// Kept deliberately small to protect the tiny-binary identity — this is not a
+// full grammar engine, just enough to make code readable.
 let highlightJS = #"""
 (function(){
   'use strict';
-  window.highlightCode = function(code, lang){ return null; };
+
+  // Shared keyword groups.
+  var JS = "break case catch class const continue debugger default delete do else export extends finally for function if import in instanceof let new return super switch this throw try typeof var void while with yield async await of static get set null undefined true false NaN Infinity";
+  var configs = {
+    javascript: { kw: JS + " implements interface enum type namespace declare readonly public private protected as is keyof infer", line: "//", block: ["/*", "*/"], strings: ["'", '"', "`"] },
+    python:     { kw: "False None True and as assert async await break class continue def del elif else except finally for from global if import in is lambda nonlocal not or pass raise return try while with yield self print", line: "#", block: null, strings: ["'", '"'] },
+    go:         { kw: "break default func interface select case defer go map struct chan else goto package switch const fallthrough if range type continue for import return var nil true false iota string int int64 bool byte rune error", line: "//", block: ["/*", "*/"], strings: ['"', "`"] },
+    rust:       { kw: "as break const continue crate dyn else enum extern false fn for if impl in let loop match mod move mut pub ref return self Self static struct super trait true type unsafe use where while async await dyn", line: "//", block: ["/*", "*/"], strings: ['"'] },
+    swift:      { kw: "associatedtype class deinit enum extension fileprivate func import init inout internal let open operator private protocol public rethrows static struct subscript typealias var break case continue default defer do else fallthrough for guard if in repeat return switch where while as catch is nil super self throw throws try true false weak unowned lazy", line: "//", block: ["/*", "*/"], strings: ['"'] },
+    clike:      { kw: "auto break case char const continue default do double else enum extern float for goto if int long register return short signed sizeof static struct switch typedef union unsigned void volatile while class public private protected virtual override new delete this true false nullptr namespace template typename using bool string", line: "//", block: ["/*", "*/"], strings: ['"', "'"] },
+    json:       { kw: "true false null", line: null, block: null, strings: ['"'] },
+    yaml:       { kw: "true false null yes no on off", line: "#", block: null, strings: ['"', "'"] },
+    bash:       { kw: "if then else elif fi case esac for while do done in function return local export readonly declare echo cd exit source set unset trap", line: "#", block: null, strings: ['"', "'"] },
+    sql:        { kw: "SELECT FROM WHERE INSERT UPDATE DELETE CREATE DROP ALTER TABLE INDEX VIEW JOIN LEFT RIGHT INNER OUTER ON AS AND OR NOT NULL IS IN LIKE BETWEEN GROUP BY ORDER HAVING LIMIT OFFSET DISTINCT COUNT SUM AVG MIN MAX INTO VALUES SET PRIMARY KEY FOREIGN REFERENCES DEFAULT", line: "--", block: ["/*", "*/"], strings: ["'"] },
+    css:        { kw: "important inherit initial unset none auto flex grid block inline absolute relative fixed sticky", line: null, block: ["/*", "*/"], strings: ['"', "'"] }
+  };
+
+  var EXT = {
+    js: "javascript", mjs: "javascript", cjs: "javascript", jsx: "javascript",
+    ts: "javascript", tsx: "javascript", py: "python", go: "go", rs: "rust",
+    swift: "swift", json: "json", yml: "yaml", yaml: "yaml", sh: "bash",
+    bash: "bash", zsh: "bash", c: "clike", h: "clike", cpp: "clike", cc: "clike",
+    cxx: "clike", hpp: "clike", java: "clike", cs: "clike", kt: "clike",
+    css: "css", scss: "css", sql: "sql", toml: "yaml", ini: "yaml"
+  };
+
+  function esc(s){ return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+  function span(cls, txt){ return '<span class="hl-' + cls + '">' + esc(txt) + '</span>'; }
+  function isWordStart(c){ return /[A-Za-z_$]/.test(c); }
+  function isWord(c){ return /[A-Za-z0-9_$]/.test(c); }
+
+  function resolveLang(lang){
+    if (!lang) return null;
+    var key = String(lang).toLowerCase();
+    if (configs[key]) return key;
+    if (EXT[key]) return EXT[key];
+    return null;
+  }
+
+  // lang may be a language name OR a filename — both are resolved.
+  window.highlightCode = function(code, lang){
+    var key = resolveLang(lang);
+    if (!key) {
+      // Maybe `lang` is a filename — try its extension.
+      var dot = String(lang || "").lastIndexOf(".");
+      if (dot >= 0) key = resolveLang(String(lang).slice(dot + 1));
+    }
+    var cfg = key && configs[key];
+    if (!cfg) return null;
+    var kwset = new Set(cfg.kw.split(/\s+/));
+    var out = "";
+    var i = 0;
+    var n = code.length;
+    var prevWord = false;
+    while (i < n) {
+      var c = code[i];
+      if (cfg.line && code.startsWith(cfg.line, i)) {
+        var j = code.indexOf("\n", i); if (j < 0) j = n;
+        out += span("com", code.slice(i, j)); i = j; prevWord = false; continue;
+      }
+      if (cfg.block && code.startsWith(cfg.block[0], i)) {
+        var k = code.indexOf(cfg.block[1], i + cfg.block[0].length);
+        k = k < 0 ? n : k + cfg.block[1].length;
+        out += span("com", code.slice(i, k)); i = k; prevWord = false; continue;
+      }
+      if (cfg.strings && cfg.strings.indexOf(c) >= 0) {
+        var q = c; var p = i + 1;
+        while (p < n) { if (code[p] === "\\") { p += 2; continue; } if (code[p] === q) { p++; break; } p++; }
+        out += span("str", code.slice(i, p)); i = p; prevWord = false; continue;
+      }
+      if (/[0-9]/.test(c) && !prevWord) {
+        var m = i; while (m < n && /[0-9a-fA-FxXoObB._]/.test(code[m])) m++;
+        out += span("num", code.slice(i, m)); i = m; prevWord = false; continue;
+      }
+      if (isWordStart(c)) {
+        var w = i; while (w < n && isWord(code[w])) w++;
+        var word = code.slice(i, w);
+        out += kwset.has(word) ? span("kw", word) : esc(word);
+        i = w; prevWord = true; continue;
+      }
+      out += esc(c); i++; prevWord = isWord(c);
+    }
+    return out;
+  };
+
+  // Map a filename/extension to a language name (or null).
+  window.highlightLangFor = function(name){ return resolveLang(name) || (function(){
+    var dot = String(name || "").lastIndexOf("."); return dot >= 0 ? resolveLang(String(name).slice(dot + 1)) : null;
+  })(); };
+
+  // Highlight fenced code blocks (<pre><code class="language-x">) inside a
+  // rendered markdown container, in place.
+  window.highlightCodeBlocks = function(container){
+    var blocks = container.querySelectorAll("pre > code");
+    for (var b = 0; b < blocks.length; b++) {
+      var codeEl = blocks[b];
+      var cls = codeEl.className || "";
+      var match = /language-([\w+-]+)/.exec(cls);
+      var lang = match ? match[1] : null;
+      var html = window.highlightCode(codeEl.textContent, lang);
+      if (html != null) { codeEl.innerHTML = html; codeEl.classList.add("hl"); }
+    }
+  };
 })();
 """#
 
@@ -2349,6 +2477,30 @@ let editorJS = #"""
     ta.focus();
   }
 
+  // Highlighted code editor: a read-painted <pre> sits behind a transparent
+  // <textarea> so editing stays native while tokens are colored live.
+  function openCode(path, text, content, lang){
+    const wrap = el('div', 'editor-code');
+    const pre = el('pre', 'editor-code-hl'); pre.setAttribute('aria-hidden', 'true');
+    const codeEl = el('code');
+    pre.appendChild(codeEl);
+    const ta = el('textarea', 'editor-code-input'); ta.value = text; ta.spellcheck = false;
+    function escapeHtml(s){ return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+    function paint(){
+      const html = window.highlightCode ? window.highlightCode(ta.value, lang) : null;
+      // Trailing newline keeps the last line scroll-aligned with the textarea.
+      codeEl.innerHTML = (html != null ? html : escapeHtml(ta.value)) + '\n';
+    }
+    paint();
+    ta.addEventListener('input', () => { paint(); setDirty(ta.value !== current.original); });
+    ta.addEventListener('scroll', () => { pre.scrollTop = ta.scrollTop; pre.scrollLeft = ta.scrollLeft; });
+    current.getText = () => ta.value;
+    wrap.appendChild(pre); wrap.appendChild(ta);
+    content.appendChild(wrap);
+    renderTabbar(path, false);
+    ta.focus();
+  }
+
   function openMarkdown(path, text, content){
     const tabs = el('div', 'editor-md-tabs');
     const tPrev = el('button', 'editor-md-tab active', 'Preview'); tPrev.dataset.tab = 'preview';
@@ -2358,7 +2510,10 @@ let editorJS = #"""
     const preview = el('div', 'editor-md-preview a2ui-markdown-preview');
     const ta = el('textarea', 'editor-source'); ta.value = text; ta.spellcheck = false; ta.style.display = 'none';
     content.appendChild(preview); content.appendChild(ta);
-    function rerender(){ if (window.renderMarkdown) window.renderMarkdown(ta.value, preview, {}); }
+    function rerender(){
+      if (window.renderMarkdown) window.renderMarkdown(ta.value, preview, {});
+      if (window.highlightCodeBlocks) window.highlightCodeBlocks(preview);
+    }
     rerender();
     ta.addEventListener('input', () => setDirty(ta.value !== current.original));
     current.getText = () => ta.value;
@@ -2390,8 +2545,13 @@ let editorJS = #"""
     }
     current = { path: path, original: res.content, dirty: false, getText: null };
     markActive(path);
-    if (MD_EXT.test(path)) openMarkdown(path, res.content, content);
-    else openText(path, res.content, content);
+    if (MD_EXT.test(path)) {
+      openMarkdown(path, res.content, content);
+    } else {
+      const lang = window.highlightLangFor ? window.highlightLangFor(path) : null;
+      if (lang) openCode(path, res.content, content, lang);
+      else openText(path, res.content, content);
+    }
   }
   window.__editorOpenFile = openFile;  // exposed for tests
   window.__editorCurrent = () => current;  // exposed for tests

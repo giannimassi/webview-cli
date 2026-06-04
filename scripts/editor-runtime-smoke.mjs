@@ -110,13 +110,25 @@ if (FS["readme.md"].content !== "# Title\n\nEdited body.\n") { console.error("FA
 if (w.__editorCurrent().dirty) { console.error("FAIL: still dirty after save"); process.exit(1); }
 console.log("PASS: editing marks dirty and Save round-trips through writeFile");
 
-// 5. Open a non-markdown file -> plain source editor (no preview tabs).
+// 5. Open a recognized code file -> highlighted code editor (no markdown tabs).
 await w.__editorOpenFile("data.json");
 await tick();
-if (w.document.querySelector(".editor-md-tabs")) { console.error("FAIL: non-markdown file should not show markdown tabs"); process.exit(1); }
-const codeArea = w.document.querySelector(".editor-content textarea.editor-source");
-if (!codeArea || !codeArea.value.includes('"a": 1')) { console.error("FAIL: code file did not open in source editor"); process.exit(1); }
-console.log("PASS: non-markdown file opens in plain source editor");
+if (w.document.querySelector(".editor-md-tabs")) { console.error("FAIL: code file should not show markdown tabs"); process.exit(1); }
+const codeInput = w.document.querySelector(".editor-content .editor-code .editor-code-input");
+if (!codeInput || !codeInput.value.includes('"a": 1')) { console.error("FAIL: code file did not open in code editor"); process.exit(1); }
+const codePre = w.document.querySelector(".editor-content .editor-code pre.editor-code-hl code");
+if (!codePre || !codePre.querySelector(".hl-str") || !codePre.querySelector(".hl-num")) {
+  console.error("FAIL: code editor not highlighted; pre HTML:", codePre && codePre.innerHTML); process.exit(1);
+}
+console.log("PASS: code file opens in highlighted code editor");
+
+// 5b. Plain (unrecognized extension) file -> plain source editor.
+await w.__editorOpenFile("sub/notes.txt");
+await tick();
+const plainArea = w.document.querySelector(".editor-content textarea.editor-source");
+if (!plainArea || !plainArea.value.includes("alpha")) { console.error("FAIL: .txt did not open in plain source editor"); process.exit(1); }
+if (w.document.querySelector(".editor-content .editor-code")) { console.error("FAIL: .txt should not use highlighted code editor"); process.exit(1); }
+console.log("PASS: unrecognized extension opens in plain source editor");
 
 // 6. Error state for a file the backend rejects.
 w.__fileOpMock = (op) => ({ ok: false, error: "not a UTF-8 text file", binary: true });
@@ -125,5 +137,28 @@ await tick();
 const empty = w.document.querySelector(".editor-content .editor-empty");
 if (!empty || !/Binary or oversized/.test(empty.textContent)) { console.error("FAIL: binary file error state missing"); process.exit(1); }
 console.log("PASS: binary/oversized file shows error state without crashing");
+
+// 7. Highlighter unit checks.
+const hl = w.highlightCode("const x = 42; // note", "javascript");
+if (!/hl-kw[^>]*>const</.test(hl)) { console.error("FAIL: highlightCode missing keyword span:", hl); process.exit(1); }
+if (!/hl-num[^>]*>42</.test(hl)) { console.error("FAIL: highlightCode missing number span:", hl); process.exit(1); }
+if (!/hl-com[^>]*>\/\/ note</.test(hl)) { console.error("FAIL: highlightCode missing comment span:", hl); process.exit(1); }
+if (w.highlightCode("anything", "no-such-lang") !== null) { console.error("FAIL: unknown lang should return null"); process.exit(1); }
+const pyStr = w.highlightCode("s = 'hi'", "python");
+if (!/hl-str[^>]*>&#039;hi&#039;</.test(pyStr) && !/hl-str[^>]*>'hi'</.test(pyStr)) { console.error("FAIL: python string not highlighted:", pyStr); process.exit(1); }
+if (w.highlightLangFor("main.go") !== "go") { console.error("FAIL: highlightLangFor(main.go) !== go"); process.exit(1); }
+if (w.highlightLangFor("notes.xyz") !== null) { console.error("FAIL: highlightLangFor(notes.xyz) should be null"); process.exit(1); }
+// XSS: angle brackets in code must be escaped, not live HTML.
+const xss = w.highlightCode("x = '<script>'", "javascript");
+if (/<script>/.test(xss)) { console.error("FAIL: highlighter did not escape <script>:", xss); process.exit(1); }
+console.log("PASS: highlightCode tokenizes + escapes; highlightLangFor maps extensions");
+
+// 8. Fenced code blocks in markdown preview get highlighted.
+const mdc = w.document.createElement("div");
+w.renderMarkdown("```js\nconst a = 1;\n```\n", mdc, {});
+w.highlightCodeBlocks(mdc);
+const fenced = mdc.querySelector("pre > code.hl");
+if (!fenced || !fenced.querySelector(".hl-kw")) { console.error("FAIL: fenced code block not highlighted:", mdc.innerHTML); process.exit(1); }
+console.log("PASS: fenced code blocks in markdown preview are highlighted");
 
 console.log("All editor runtime smoke checks pass");
