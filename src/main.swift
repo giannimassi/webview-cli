@@ -17,6 +17,8 @@ struct Config {
     var comments: Bool = false
     var edits: Bool = false
     var allowHtml: Bool = false
+    var folderMode: Bool = false
+    var folderPath: String? = nil
 }
 
 func parseArgs() -> Config? {
@@ -59,6 +61,12 @@ func parseArgs() -> Config? {
         case "--screen":
             i += 1; guard i < args.count else { return nil }
             config.screen = Int(args[i]) ?? 0
+        case "--folder":
+            config.folderMode = true
+            if i + 1 < args.count && !args[i + 1].hasPrefix("-") {
+                i += 1
+                config.folderPath = args[i]
+            }
         case "--help", "-h":
             printUsage(); exit(0)
         default:
@@ -71,20 +79,22 @@ func parseArgs() -> Config? {
         i += 1
     }
 
-    // Validate mutual exclusion: --markdown incompatible with --a2ui or --url
-    if config.markdownMode {
-        if config.a2ui {
-            writeStderr("Error: --markdown and --a2ui are mutually exclusive")
-            return nil
-        }
-        if !config.url.isEmpty {
-            writeStderr("Error: --markdown and --url are mutually exclusive")
-            return nil
-        }
+    // Validate mutual exclusion
+    let modeCount = [config.a2ui, config.markdownMode, config.folderMode].filter { $0 }.count
+    if modeCount > 1 {
+        writeStderr("Error: --a2ui, --markdown, and --folder are mutually exclusive")
+        return nil
+    }
+    if config.markdownMode && !config.url.isEmpty {
+        writeStderr("Error: --markdown and --url are mutually exclusive")
+        return nil
+    }
+    if config.folderMode && !config.url.isEmpty {
+        writeStderr("Error: --folder and --url are mutually exclusive")
+        return nil
     }
 
-    // In a2ui mode, URL is optional (uses agent://host/index.html)
-    if !config.a2ui && !config.markdownMode && config.url.isEmpty { return nil }
+    if !config.a2ui && !config.markdownMode && !config.folderMode && config.url.isEmpty { return nil }
     return config
 }
 
@@ -101,6 +111,9 @@ func printUsage() {
                          returns userAction on stdout
       --markdown         Markdown editor mode: reads markdown from stdin, renders
                          interactive editor with optional comments and edits
+      --folder [path]    Folder browser mode: browse files in a directory.
+                         Opens path if given, otherwise shows a folder picker.
+                         Markdown files render inline; other files open externally.
 
     Options:
       --title <title>    Window title (default: "webview-cli")
@@ -241,6 +254,10 @@ class AppCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NS
     // A2UI sync state
     var pendingA2UIPayload: String? = nil
     var rendererReady = false
+    // Folder browser state
+    var currentFolderPath: String? = nil
+    static let recentFoldersKey = "webview-cli.recentFolders"
+    static let maxRecentFolders = 10
 
     init(config: Config) {
         self.config = config
@@ -252,6 +269,7 @@ class AppCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NS
         let contentController = WKUserContentController()
         contentController.add(self, name: "complete")
         contentController.add(self, name: "ready")
+        contentController.add(self, name: "navigate")
 
         let errorScript = WKUserScript(
             source: """
@@ -303,6 +321,8 @@ class AppCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NS
             setupA2UIMode()
         } else if config.markdownMode {
             setupMarkdownMode()
+        } else if config.folderMode {
+            setupFolderMode()
         } else {
             guard let url = URL(string: config.url), url.scheme != nil else {
                 emitAndExit(status: "error", message: "Invalid URL (must include scheme): \(config.url)", code: 3)
@@ -525,6 +545,11 @@ class AppCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NS
             emitAndExit(status: "completed", data: message.body, code: 0)
         case "ready":
             writeStderr("[ready] Page signaled ready")
+        case "navigate":
+            if let body = message.body as? [String: Any],
+               let path = body["path"] as? String {
+                handleNavigation(to: path)
+            }
         default: break
         }
     }
@@ -545,6 +570,317 @@ class AppCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NS
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         emitAndExit(status: "error", message: "Failed to load: \(error.localizedDescription)", code: 3)
+    }
+
+    // MARK: - Folder Browser
+
+    func setupFolderMode() {
+        schemeHandler.loadRawResource(path: "micromark.js", content: micromarkJS)
+        schemeHandler.loadRawResource(path: "markdown-renderer.js", content: markdownRendererJS)
+        schemeHandler.loadRawResource(path: "styles.css", content: a2uiRendererCSS)
+
+        if let path = config.folderPath, !path.isEmpty {
+            openFolder(path)
+        } else {
+            showFolderPicker()
+        }
+    }
+
+    func showFolderPicker() {
+        let isInitialLaunch = currentFolderPath == nil && !config.a2ui && !config.markdownMode && config.url.isEmpty
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.message = "Choose a folder to browse"
+        panel.begin { [weak self] response in
+            guard response == .OK, let url = panel.url else {
+                if isInitialLaunch { self?.emitAndExit(status: "cancelled", code: 1) }
+                return
+            }
+            self?.openFolder(url.path)
+        }
+    }
+
+    func openFolder(_ path: String) {
+        let resolvedPath = (path as NSString).expandingTildeInPath
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: resolvedPath, isDirectory: &isDir), isDir.boolValue else {
+            writeStderr("[folder] Not a directory: \(resolvedPath)")
+            return
+        }
+        currentFolderPath = resolvedPath
+        window.title = (resolvedPath as NSString).lastPathComponent
+        addToRecentFolders(resolvedPath)
+
+        let html = generateFolderListingHTML(path: resolvedPath)
+        schemeHandler.loadRawResource(path: "folder.html", content: html)
+        webView.load(URLRequest(url: URL(string: "agent://host/folder.html")!))
+    }
+
+    func handleNavigation(to path: String) {
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir) else {
+            writeStderr("[navigate] Path not found: \(path)")
+            return
+        }
+        if isDir.boolValue {
+            openFolder(path)
+        } else {
+            let ext = (path as NSString).pathExtension.lowercased()
+            if ext == "md" || ext == "markdown" {
+                openMarkdownFile(path)
+            } else {
+                NSWorkspace.shared.open(URL(fileURLWithPath: path))
+            }
+        }
+    }
+
+    func openMarkdownFile(_ path: String) {
+        guard let content = try? String(contentsOfFile: path, encoding: .utf8) else {
+            writeStderr("[folder] Cannot read file: \(path)")
+            return
+        }
+        let parentDir = (path as NSString).deletingLastPathComponent
+        let fileName = (path as NSString).lastPathComponent
+        window.title = fileName
+
+        let b64Content = Data(content.utf8).base64EncodedString()
+        let escapedFileName = escapeHTML(fileName)
+        let escapedFolderName = escapeHTML((parentDir as NSString).lastPathComponent)
+
+        let html = """
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <link rel="stylesheet" href="agent://host/styles.css">
+        <style>
+        .back-bar {
+          position: sticky; top: 0; z-index: 10;
+          background: var(--bg); border-bottom: 1px solid var(--border);
+          padding: 8px 16px; display: flex; align-items: center; gap: 8px;
+        }
+        .back-btn {
+          color: var(--accent); cursor: pointer; font-size: 13px;
+          background: none; border: none; font-family: inherit; padding: 4px 0;
+        }
+        .back-btn:hover { text-decoration: underline; }
+        .file-title { color: var(--muted); font-size: 13px; }
+        .md-content { padding: 1.25rem; max-width: 800px; }
+        </style>
+        </head>
+        <body>
+        <div class="back-bar" data-path="\(escapeHTML(parentDir))">
+          <button class="back-btn">‹ \(escapedFolderName)</button>
+          <span class="file-title">\(escapedFileName)</span>
+        </div>
+        <div class="md-content" id="md-root"></div>
+        <script src="agent://host/micromark.js"></script>
+        <script src="agent://host/markdown-renderer.js"></script>
+        <script>
+        function nav(p){window.webkit.messageHandlers.navigate.postMessage({path:p});}
+        document.querySelector('.back-bar').addEventListener('click',function(){nav(this.dataset.path);});
+        var md=new TextDecoder('utf-8').decode(Uint8Array.from(atob('\(b64Content)'),function(c){return c.charCodeAt(0);}));
+        window.renderMarkdown(md,document.getElementById('md-root'),{allowHtml:false});
+        </script>
+        </body>
+        </html>
+        """
+        schemeHandler.loadRawResource(path: "file-view.html", content: html)
+        webView.load(URLRequest(url: URL(string: "agent://host/file-view.html")!))
+    }
+
+    func generateFolderListingHTML(path: String) -> String {
+        let fm = FileManager.default
+        let contents = (try? fm.contentsOfDirectory(atPath: path)) ?? []
+
+        struct Entry {
+            let name: String
+            let isDir: Bool
+            let size: Int64
+            let modified: Date?
+        }
+
+        var entries: [Entry] = []
+        for name in contents {
+            if name.hasPrefix(".") { continue }
+            let fullPath = (path as NSString).appendingPathComponent(name)
+            var isDir: ObjCBool = false
+            fm.fileExists(atPath: fullPath, isDirectory: &isDir)
+            let attrs = try? fm.attributesOfItem(atPath: fullPath)
+            let size = (attrs?[.size] as? Int64) ?? 0
+            let modified = attrs?[.modificationDate] as? Date
+            entries.append(Entry(name: name, isDir: isDir.boolValue, size: size, modified: modified))
+        }
+        entries.sort { a, b in
+            if a.isDir != b.isDir { return a.isDir }
+            return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+        }
+
+        let breadcrumb = generateBreadcrumb(for: path)
+
+        var rows = ""
+        if path != "/" {
+            let parent = (path as NSString).deletingLastPathComponent
+            rows += "<div class=\"item\" data-path=\"\(escapeHTML(parent))\">"
+            rows += "<span class=\"icon\">📁</span>"
+            rows += "<span class=\"name dir\">..</span>"
+            rows += "<span class=\"meta\"></span>"
+            rows += "</div>\n"
+        }
+
+        let dateFmt = DateFormatter()
+        dateFmt.dateFormat = "MMM d, yyyy HH:mm"
+
+        for entry in entries {
+            let fullPath = (path as NSString).appendingPathComponent(entry.name)
+            let icon = entry.isDir ? "📁" : fileIcon(for: entry.name)
+            let nameClass = entry.isDir ? "name dir" : "name"
+            let meta: String
+            if entry.isDir {
+                let count = ((try? fm.contentsOfDirectory(atPath: fullPath))?.filter { !$0.hasPrefix(".") }.count) ?? 0
+                meta = "\(count) item\(count == 1 ? "" : "s")"
+            } else {
+                var parts: [String] = [formatFileSize(entry.size)]
+                if let mod = entry.modified { parts.append(dateFmt.string(from: mod)) }
+                meta = parts.joined(separator: " · ")
+            }
+            rows += "<div class=\"item\" data-path=\"\(escapeHTML(fullPath))\">"
+            rows += "<span class=\"icon\">\(icon)</span>"
+            rows += "<span class=\"\(nameClass)\">\(escapeHTML(entry.name))</span>"
+            rows += "<span class=\"meta\">\(escapeHTML(meta))</span>"
+            rows += "</div>\n"
+        }
+
+        if entries.isEmpty {
+            rows = "<div class=\"empty\">This folder is empty</div>"
+        }
+
+        return """
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+        <meta charset="utf-8">
+        <style>
+        :root {
+          --bg: #1c1c1e; --surface: #2c2c2e; --text: #f2f2f7;
+          --muted: #8e8e93; --accent: #0a84ff; --border: rgba(255,255,255,0.08);
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+          background: var(--bg); color: var(--text);
+          font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+          font-size: 14px; -webkit-font-smoothing: antialiased;
+        }
+        .header {
+          position: sticky; top: 0; z-index: 10; background: var(--bg);
+          border-bottom: 1px solid var(--border); padding: 12px 16px;
+        }
+        .breadcrumb {
+          display: flex; align-items: center; gap: 2px;
+          font-size: 13px; color: var(--muted); overflow-x: auto; white-space: nowrap;
+        }
+        .breadcrumb a { color: var(--accent); text-decoration: none; cursor: pointer; padding: 2px 4px; border-radius: 4px; }
+        .breadcrumb a:hover { background: var(--surface); }
+        .breadcrumb .sep { color: var(--muted); margin: 0 1px; }
+        .breadcrumb .current { color: var(--text); font-weight: 500; padding: 2px 4px; }
+        .listing { padding: 4px 0; }
+        .item {
+          display: flex; align-items: center; gap: 10px;
+          padding: 7px 16px; cursor: pointer; transition: background 0.1s;
+        }
+        .item:hover { background: var(--surface); }
+        .item .icon { font-size: 16px; width: 24px; text-align: center; flex-shrink: 0; }
+        .item .name { flex: 1; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .item .name.dir { color: var(--accent); }
+        .item .meta { font-size: 12px; color: var(--muted); flex-shrink: 0; white-space: nowrap; }
+        .empty { padding: 40px 16px; text-align: center; color: var(--muted); font-size: 13px; }
+        </style>
+        </head>
+        <body>
+        <div class="header"><div class="breadcrumb">\(breadcrumb)</div></div>
+        <div class="listing">\(rows)</div>
+        <script>
+        function nav(p){window.webkit.messageHandlers.navigate.postMessage({path:p});}
+        document.addEventListener('click',function(e){var t=e.target.closest('[data-path]');if(t)nav(t.dataset.path);});
+        </script>
+        </body>
+        </html>
+        """
+    }
+
+    func generateBreadcrumb(for path: String) -> String {
+        let components = path.split(separator: "/", omittingEmptySubsequences: true)
+        var html = "<a data-path=\"/\">/</a>"
+        var current = ""
+        for (i, comp) in components.enumerated() {
+            current += "/\(comp)"
+            html += "<span class=\"sep\">›</span>"
+            if i == components.count - 1 {
+                html += "<span class=\"current\">\(escapeHTML(String(comp)))</span>"
+            } else {
+                html += "<a data-path=\"\(escapeHTML(current))\">\(escapeHTML(String(comp)))</a>"
+            }
+        }
+        return html
+    }
+
+    func fileIcon(for name: String) -> String {
+        let ext = (name as NSString).pathExtension.lowercased()
+        switch ext {
+        case "md", "markdown": return "📝"
+        case "swift": return "🔶"
+        case "py": return "🐍"
+        case "js", "ts", "jsx", "tsx": return "📜"
+        case "json", "yaml", "yml", "toml": return "⚙️"
+        case "png", "jpg", "jpeg", "gif", "svg", "webp": return "🖼️"
+        case "pdf": return "📕"
+        case "txt", "log": return "📄"
+        case "sh", "bash", "zsh": return "⚡"
+        case "go": return "🔵"
+        case "rs": return "🦀"
+        case "html", "css": return "🌐"
+        default: return "📄"
+        }
+    }
+
+    func formatFileSize(_ bytes: Int64) -> String {
+        if bytes < 1024 { return "\(bytes) B" }
+        if bytes < 1024 * 1024 { return "\(bytes / 1024) KB" }
+        if bytes < 1024 * 1024 * 1024 { return String(format: "%.1f MB", Double(bytes) / (1024 * 1024)) }
+        return String(format: "%.1f GB", Double(bytes) / (1024 * 1024 * 1024))
+    }
+
+    func escapeHTML(_ s: String) -> String {
+        s.replacingOccurrences(of: "&", with: "&amp;")
+         .replacingOccurrences(of: "<", with: "&lt;")
+         .replacingOccurrences(of: ">", with: "&gt;")
+         .replacingOccurrences(of: "\"", with: "&quot;")
+    }
+
+    func escapeJSString(_ s: String) -> String {
+        s.replacingOccurrences(of: "\\", with: "\\\\")
+         .replacingOccurrences(of: "'", with: "\\'")
+         .replacingOccurrences(of: "\"", with: "\\\"")
+         .replacingOccurrences(of: "\n", with: "\\n")
+         .replacingOccurrences(of: "\r", with: "\\r")
+         .replacingOccurrences(of: "\t", with: "\\t")
+    }
+
+    // MARK: - Recent Folders
+
+    func addToRecentFolders(_ path: String) {
+        var recent = UserDefaults.standard.stringArray(forKey: AppCoordinator.recentFoldersKey) ?? []
+        recent.removeAll { $0 == path }
+        recent.insert(path, at: 0)
+        if recent.count > AppCoordinator.maxRecentFolders { recent = Array(recent.prefix(AppCoordinator.maxRecentFolders)) }
+        UserDefaults.standard.set(recent, forKey: AppCoordinator.recentFoldersKey)
+    }
+
+    static func recentFolders() -> [String] {
+        UserDefaults.standard.stringArray(forKey: recentFoldersKey) ?? []
     }
 
     // MARK: - NSWindowDelegate
@@ -577,24 +913,35 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Wire standard Edit menu so Cmd+C/V/X/A/Z route to WKWebView via NSResponder chain.
-        // Without this, an .accessory-policy app routes those shortcuts nowhere.
-        setupEditMenu()
+        setupMenus()
         coordinator.run()
     }
 
-    private func setupEditMenu() {
+    private func setupMenus() {
         let mainMenu = NSMenu()
 
-        // Required app menu (first item). Items inside aren't strictly needed for our case,
-        // but the mainMenu must have at least one submenu for menu equivalents to resolve.
+        // App menu
         let appMenuItem = NSMenuItem()
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appMenuItem.submenu = appMenu
         mainMenu.addItem(appMenuItem)
 
-        // Edit menu — the actual reason we're here.
+        // File menu
+        let fileItem = NSMenuItem()
+        let fileMenu = NSMenu(title: "File")
+        fileMenu.addItem(withTitle: "Open Folder…", action: #selector(openFolderAction), keyEquivalent: "o")
+
+        let recentItem = NSMenuItem(title: "Open Recent", action: nil, keyEquivalent: "")
+        let recentMenu = NSMenu(title: "Open Recent")
+        rebuildRecentMenu(recentMenu)
+        recentItem.submenu = recentMenu
+        fileMenu.addItem(recentItem)
+
+        fileItem.submenu = fileMenu
+        mainMenu.addItem(fileItem)
+
+        // Edit menu
         let editItem = NSMenuItem()
         let editMenu = NSMenu(title: "Edit")
         editMenu.addItem(withTitle: "Undo",       action: Selector(("undo:")),      keyEquivalent: "z")
@@ -610,6 +957,39 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         mainMenu.addItem(editItem)
 
         NSApp.mainMenu = mainMenu
+    }
+
+    @objc func openFolderAction() {
+        coordinator.showFolderPicker()
+    }
+
+    @objc func openRecentFolderAction(_ sender: NSMenuItem) {
+        guard let path = sender.representedObject as? String else { return }
+        coordinator.openFolder(path)
+    }
+
+    func rebuildRecentMenu(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let recent = AppCoordinator.recentFolders()
+        if recent.isEmpty {
+            let empty = NSMenuItem(title: "No Recent Folders", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            menu.addItem(empty)
+        } else {
+            for path in recent {
+                let item = NSMenuItem(title: (path as NSString).lastPathComponent, action: #selector(openRecentFolderAction(_:)), keyEquivalent: "")
+                item.representedObject = path
+                item.toolTip = path
+                item.target = self
+                menu.addItem(item)
+            }
+            menu.addItem(.separator())
+            menu.addItem(withTitle: "Clear Recent", action: #selector(clearRecentFolders), keyEquivalent: "")
+        }
+    }
+
+    @objc func clearRecentFolders() {
+        UserDefaults.standard.removeObject(forKey: AppCoordinator.recentFoldersKey)
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -1491,8 +1871,67 @@ guard let config = parseArgs() else {
     exit(3)
 }
 
+func makeAppIcon() -> NSImage {
+    let size: CGFloat = 256
+    let img = NSImage(size: NSSize(width: size, height: size))
+    img.lockFocus()
+    guard let ctx = NSGraphicsContext.current?.cgContext else {
+        img.unlockFocus()
+        return img
+    }
+
+    // Folder body
+    let folderColor = NSColor(red: 0.35, green: 0.60, blue: 1.0, alpha: 1.0)
+    let folderDark = NSColor(red: 0.25, green: 0.45, blue: 0.85, alpha: 1.0)
+
+    // Tab
+    ctx.setFillColor(folderColor.cgColor)
+    let tab = CGMutablePath()
+    tab.move(to: CGPoint(x: 24, y: 200))
+    tab.addLine(to: CGPoint(x: 24, y: 218))
+    tab.addQuadCurve(to: CGPoint(x: 36, y: 228), control: CGPoint(x: 24, y: 228))
+    tab.addLine(to: CGPoint(x: 100, y: 228))
+    tab.addLine(to: CGPoint(x: 116, y: 210))
+    tab.addLine(to: CGPoint(x: 24, y: 210))
+    tab.closeSubpath()
+    ctx.addPath(tab)
+    ctx.fillPath()
+
+    // Body
+    let body = CGRect(x: 24, y: 56, width: 208, height: 160)
+    let bodyPath = CGPath(roundedRect: body, cornerWidth: 14, cornerHeight: 14, transform: nil)
+    ctx.setFillColor(folderColor.cgColor)
+    ctx.addPath(bodyPath)
+    ctx.fillPath()
+
+    // Inner shade
+    let inner = CGRect(x: 24, y: 56, width: 208, height: 120)
+    let innerPath = CGPath(roundedRect: inner, cornerWidth: 14, cornerHeight: 14, transform: nil)
+    ctx.setFillColor(folderDark.cgColor)
+    ctx.addPath(innerPath)
+    ctx.fillPath()
+
+    // Eye/lens — a circle with a small handle
+    ctx.setStrokeColor(NSColor.white.cgColor)
+    ctx.setLineWidth(10)
+    ctx.strokeEllipse(in: CGRect(x: 84, y: 98, width: 72, height: 72))
+    ctx.setLineWidth(10)
+    ctx.setLineCap(.round)
+    ctx.move(to: CGPoint(x: 146, y: 108))
+    ctx.addLine(to: CGPoint(x: 170, y: 82))
+    ctx.strokePath()
+
+    // Small dot highlight on lens
+    ctx.setFillColor(NSColor.white.withAlphaComponent(0.5).cgColor)
+    ctx.fillEllipse(in: CGRect(x: 100, y: 146, width: 14, height: 14))
+
+    img.unlockFocus()
+    return img
+}
+
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
+app.applicationIconImage = makeAppIcon()
 
 let coordinator = AppCoordinator(config: config)
 let delegate = AppDelegate(coordinator: coordinator)
