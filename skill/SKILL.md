@@ -22,6 +22,7 @@ If running the command feels risky, ask for permission to run it — not to past
 | Presenting 5-20 options to choose from | **Yes** — radio/select picker |
 | Showing a diff/preview/report before user confirms | **Yes** — formatted content is readable |
 | Reviewing a markdown doc (spec, PR description, draft) with comments/edits | **Yes** — use `--markdown` mode (Mode 3) |
+| Letting the user browse/edit files in a directory (tree, syntax highlighting, md preview) | **Yes** — use `--editor <path>` mode (Mode 5) |
 | Simple yes/no question | **No** — just ask in terminal |
 | Agent-side computation taking >30s before UI can render | **No** — show a text status instead |
 | Non-interactive environment (CI, piped output) | **No** — preflight will fail, fall back to terminal |
@@ -43,9 +44,9 @@ fi
 
 If preflight fails, fall back to terminal Q&A — don't try to be clever. Report why the webview path isn't available and continue in text.
 
-## The four modes
+## The modes
 
-**Exactly one of `--a2ui`, `--url`, or `--markdown` must be specified.** Omitting all three is the most common failure — the binary exits 3 with usage.
+**Exactly one of `--a2ui`, `--url`, `--markdown`, or `--editor` must be specified.** Omitting all of them is the most common failure — the binary exits 3 with usage.
 
 ### Mode 1 — `a2ui` (recommended) · declarative UI
 
@@ -116,6 +117,21 @@ webview-cli --url "agent://host/index.html" --timeout 120 < /tmp/wv-load.json
 **Common failure — `NSURLErrorDomain error -1100`**: the resource key in the `load` command doesn't match the path in `--url`. If you use `--url "agent://host/index.html"`, the `resources` map must contain the key `"index.html"` (exact match, no leading slash). When this persistently fails, fall back to Mode 3 — pipe the rendered content as markdown instead of hand-rolling HTML.
 
 Pick Mode 4 over Mode 3 only when you need charts, syntax-highlighted diffs, images, or custom interactions. If you're writing >200 lines of HTML, consider splitting the work into a proper tool instead.
+
+### Mode 5 — `editor` · browse + edit files
+
+```bash
+webview-cli --editor ./docs              # open a directory as an editor
+webview-cli --editor ./notes/spec.md     # open a single file (its dir is the tree root)
+webview-cli --editor ./docs --comments   # add the review/Submit flow on top
+```
+
+A native text editor over the path: lazy file-tree sidebar, syntax highlighting (code files + fenced markdown blocks), markdown Preview/Source tabs, clickable links (external → browser, relative → opens in-editor), and frontmatter shown as a metadata block. Edits save to disk in place on `⌘S`; the window stays open. `⌘P` fuzzy quick-open; `⌘⇧F` searches file contents across the tree (click a match to open at that line).
+
+- Filesystem access is **scoped to the opened root** — `../` and symlink escapes are rejected by the binary.
+- Closing the window exits `cancelled` (nothing auto-saves; saves are explicit via `⌘S`).
+- With `--comments`, clicking a preview block attaches a comment and **Submit** (`⌘↵`) returns `{action:"submit", file, edited_text, comments}` on stdout — the same return-to-agent contract as `--markdown --comments`.
+- Use this when the user wants to *navigate and edit files*; use Mode 3 (`--markdown`) when it's a one-shot review of a single doc piped on stdin.
 
 ## A2UI catalog (Mode 1)
 

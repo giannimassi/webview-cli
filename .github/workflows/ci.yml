@@ -26,12 +26,16 @@ jobs:
       - name: Build
         run: make build
 
-      - name: Verify binary size under 300KB
+      - name: Verify binary size under 420KB
         run: |
           SIZE=$(stat -f%z webview-cli)
           echo "Binary size: $SIZE bytes"
-          if [ "$SIZE" -gt 307200 ]; then
-            echo "Binary exceeds 300KB budget (v0.2.0 baseline; markdown editor adds ~100KB over the v0.1.x 193KB base)"
+          # Budget history: 193KB (v0.1.x) -> ~290KB (markdown editor) ->
+          # ~348KB (--editor mode: file tree, syntax highlighter, link routing,
+          # frontmatter + comments). 420KB leaves headroom for the embedded UI
+          # JS while still being ~120x smaller than an Electron equivalent.
+          if [ "$SIZE" -gt 430080 ]; then
+            echo "Binary exceeds 420KB budget"
             exit 1
           fi
 

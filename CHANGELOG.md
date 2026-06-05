@@ -4,6 +4,21 @@ All notable changes to webview-cli. Format follows [Keep a Changelog](https://ke
 
 ## [Unreleased]
 
+### Added
+
+- **`--editor <path>` mode** — turns webview-cli into a small native text editor over a directory (or a single file's parent dir):
+  - **File navigation** — a lazy-expanding file tree sidebar (dotfiles hidden, dirs first). Click a file to open it.
+  - **Syntax highlighting** — a compact dependency-free tokenizer (js/ts, python, go, rust, swift, json, yaml, bash, sql, css, c-like fallback) colors code files in a live editor and fenced code blocks in markdown previews. Always HTML-escaped (XSS-safe).
+  - **Markdown preview + link following** — markdown files open with Preview/Source tabs; external `http(s)` links open in the system browser, relative links resolve against the current file and open in the editor.
+  - **Frontmatter** — a leading `---` YAML block is surfaced as a metadata block atop the preview (and stays editable in the Source view) rather than vanishing.
+  - **⌘P quick-open** — fuzzy-find a file by name/path across the whole tree and open it.
+  - **⌘⇧F content search** — grep file contents across the tree (scoped, case-insensitive); results group by file with line numbers, click to open at that line.
+  - **Edits save to disk in place** (`⌘S`); the window stays open so you can keep navigating and editing.
+  - **Regular app window** — editor mode runs with `.regular` activation policy (Dock icon + ⌘-Tab switcher), unlike the transient `.accessory` agent-prompt modes.
+  - **`--comments` flow preserved** — with `--editor --comments`, click a preview block to attach a comment; **Submit** (`⌘↵`) returns `{action:"submit", file, edited_text, comments}` to the agent over stdout and closes, exactly like `--markdown --comments`.
+- **Scoped file-I/O bridge** — a `fileOp` WKScriptMessageHandler (`listDir`/`readFile`/`writeFile`/`listAll`/`search`) scoped to the opened root, rejecting `../` and symlink escapes. `listAll` powers ⌘P; `search` powers ⌘⇧F (skips dotfiles + heavy build dirs like `node_modules`, caps walk/results). Also driveable via a `{"type":"fileop",...}` stdin command (the no-GUI CI test seam).
+- **Editor test harnesses** — `scripts/editor-runtime-smoke.mjs` (jsdom: tree, open/edit/save, highlighting, links, frontmatter, comments) and `scripts/editor-smoke.sh` (binary: the `fileop` stdin protocol + path-escape rejection against a temp dir), both wired into `make test` + CI.
+
 ### Fixed
 
 - **YAML frontmatter in `--markdown` mode** — a leading `---\n...\n---\n` block at the top of the input no longer renders as a stray `<hr>` + a setext `<h2>` containing the YAML keys. It's stripped from the preview while the Source tab still shows it unchanged and `data-src-start` / `data-src-end` annotations on downstream blocks stay anchored to the original line numbers (so comment payloads reference the lines the user actually sees).

@@ -193,6 +193,23 @@ Review a spec AND pick options in one window. Comments, edits, and form fields t
 
 </table>
 
+## Editor mode (`--editor`)
+
+```bash
+webview-cli --editor ./docs          # open a directory
+webview-cli --editor ./notes/spec.md # open a single file (its dir becomes the tree root)
+```
+
+Turns the same tiny binary into a native text editor — a file-tree sidebar, syntax highlighting, markdown preview with clickable links, and frontmatter shown as a metadata block. Edits save to disk in place (`⌘S`); the window stays open so you keep navigating.
+
+- **File tree** — lazy-expanding sidebar (dotfiles hidden, directories first). Click to open.
+- **⌘P quick-open** — fuzzy-find any file by name/path and jump to it. **⌘⇧F** — search file contents across the tree; results group by file with line numbers, click to open at the match.
+- **Syntax highlighting** — code files open in a live highlighted editor; fenced code blocks in markdown previews are colored too. ~12 languages + a c-like fallback, all HTML-escaped.
+- **Markdown** — Preview/Source tabs. External `http(s)` links open in your browser; relative links (`./other.md`) open in the editor. A leading `---` YAML frontmatter block is surfaced as metadata, not hidden.
+- **Review flow preserved** — add `--comments` to click a preview block and attach feedback; **Submit** (`⌘↵`) returns `{action:"submit", file, edited_text, comments}` on stdout and closes, just like `--markdown --comments`.
+
+All filesystem access is scoped to the opened root — `../` and symlink escapes are rejected. The editor talks to the binary over a small `fileOp` bridge (`listDir`/`readFile`/`writeFile`), which is also driveable via stdin (`{"type":"fileop",...}`) for scripting and tests.
+
 <details>
 <summary><b>What the raw A2UI JSONL looks like</b> (click to expand — the skill writes this for you)</summary>
 

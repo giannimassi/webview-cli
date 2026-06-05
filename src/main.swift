@@ -19,6 +19,8 @@ struct Config {
     var allowHtml: Bool = false
     var folderMode: Bool = false
     var folderPath: String? = nil
+    var editorMode: Bool = false
+    var editorRoot: String = ""
 }
 
 func parseArgs() -> Config? {
@@ -46,6 +48,14 @@ func parseArgs() -> Config? {
             config.a2ui = true
         case "--markdown":
             config.markdownMode = true
+        case "--editor":
+            config.editorMode = true
+            // Consume the next token as the path only if it's not another flag.
+            // A missing path is reported by validation ("--editor requires a path").
+            if i + 1 < args.count && !args[i + 1].hasPrefix("-") {
+                i += 1
+                config.editorRoot = args[i]
+            }
         case "--comments":
             config.comments = true
         case "--edits":
@@ -80,21 +90,18 @@ func parseArgs() -> Config? {
     }
 
     // Validate mutual exclusion
-    let modeCount = [config.a2ui, config.markdownMode, config.folderMode].filter { $0 }.count
+    let modeCount = [config.a2ui, config.markdownMode, config.folderMode, config.editorMode].filter { $0 }.count
     if modeCount > 1 {
-        writeStderr("Error: --a2ui, --markdown, and --folder are mutually exclusive")
-        return nil
-    }
-    if config.markdownMode && !config.url.isEmpty {
-        writeStderr("Error: --markdown and --url are mutually exclusive")
-        return nil
-    }
-    if config.folderMode && !config.url.isEmpty {
-        writeStderr("Error: --folder and --url are mutually exclusive")
+        writeStderr("Error: --a2ui, --markdown, --folder, and --editor are mutually exclusive")
         return nil
     }
 
-    if !config.a2ui && !config.markdownMode && !config.folderMode && config.url.isEmpty { return nil }
+    if config.editorMode && config.editorRoot.isEmpty {
+        writeStderr("Error: --editor requires a path")
+        return nil
+    }
+
+    if !config.a2ui && !config.markdownMode && !config.folderMode && !config.editorMode && config.url.isEmpty { return nil }
     return config
 }
 
@@ -114,6 +121,9 @@ func printUsage() {
       --folder [path]    Folder browser mode: browse files in a directory.
                          Opens path if given, otherwise shows a folder picker.
                          Markdown files render inline; other files open externally.
+      --editor <path>    Text editor mode: opens a file or directory with a file
+                         tree, syntax highlighting, markdown preview + link
+                         following. Edits save to disk in place.
 
     Options:
       --title <title>    Window title (default: "webview-cli")
@@ -212,6 +222,198 @@ class AgentSchemeHandler: NSObject, WKURLSchemeHandler {
     }
 }
 
+// MARK: - File Service (editor mode)
+
+/// Filesystem access scoped to a single root directory. Every path is resolved
+/// against `root` and rejected if it escapes (via `..` or a symlink pointing
+/// outside). Used by both the `fileOp` JS bridge and the `fileop` stdin test seam.
+struct FileService {
+    let root: URL
+    static let maxReadBytes = 4 * 1024 * 1024  // 4MB cap on readFile
+
+    /// `rootPath` may be a directory (opened directly) or a file (its parent
+    /// directory becomes the root, and the file is the initial selection).
+    init?(rootPath: String) {
+        let expanded = (rootPath as NSString).expandingTildeInPath
+        let url = URL(fileURLWithPath: expanded).resolvingSymlinksInPath().standardizedFileURL
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) else { return nil }
+        self.root = isDir.boolValue ? url : url.deletingLastPathComponent()
+    }
+
+    /// Resolve a relative (or absolute) path to a URL guaranteed to live under
+    /// `root`. Returns nil on any escape — both the lexical (`..`) and the
+    /// symlink-resolved forms must stay inside the root.
+    func resolve(_ path: String) -> URL? {
+        let trimmed = path.trimmingCharacters(in: .whitespaces)
+        let base: URL = trimmed.hasPrefix("/")
+            ? URL(fileURLWithPath: trimmed)
+            : root.appendingPathComponent(trimmed)
+        let lexical = base.standardizedFileURL
+        let symlinkResolved = base.resolvingSymlinksInPath().standardizedFileURL
+        for candidate in [lexical, symlinkResolved] {
+            let p = candidate.path
+            if p != root.path && !p.hasPrefix(root.path + "/") { return nil }
+        }
+        return lexical
+    }
+
+    /// Path of `url` relative to `root` ("" for the root itself).
+    func relPath(_ url: URL) -> String {
+        let p = url.standardizedFileURL.path
+        if p == root.path { return "" }
+        if p.hasPrefix(root.path + "/") { return String(p.dropFirst(root.path.count + 1)) }
+        return url.lastPathComponent
+    }
+
+    func listDir(_ path: String) -> [String: Any] {
+        guard let dir = resolve(path) else { return ["ok": false, "error": "path escapes root"] }
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: dir.path, isDirectory: &isDir), isDir.boolValue else {
+            return ["ok": false, "error": "not a directory"]
+        }
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else {
+            return ["ok": false, "error": "cannot read directory"]
+        }
+        var entries: [[String: Any]] = []
+        for name in names {
+            if name.hasPrefix(".") { continue }  // hide dotfiles by default
+            let child = dir.appendingPathComponent(name)
+            var childIsDir: ObjCBool = false
+            FileManager.default.fileExists(atPath: child.path, isDirectory: &childIsDir)
+            entries.append([
+                "name": name,
+                "path": relPath(child),
+                "type": childIsDir.boolValue ? "dir" : "file"
+            ])
+        }
+        // Directories first, then alphabetical (case-insensitive).
+        entries.sort {
+            let ad = ($0["type"] as? String) == "dir"
+            let bd = ($1["type"] as? String) == "dir"
+            if ad != bd { return ad }
+            return ($0["name"] as? String ?? "").lowercased() < ($1["name"] as? String ?? "").lowercased()
+        }
+        return ["ok": true, "path": relPath(dir), "entries": entries]
+    }
+
+    func readFile(_ path: String) -> [String: Any] {
+        guard let file = resolve(path) else { return ["ok": false, "error": "path escapes root"] }
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: file.path, isDirectory: &isDir), !isDir.boolValue else {
+            return ["ok": false, "error": "not a file"]
+        }
+        guard let data = try? Data(contentsOf: file) else { return ["ok": false, "error": "cannot read file"] }
+        if data.count > FileService.maxReadBytes {
+            return ["ok": false, "error": "file too large (>\(FileService.maxReadBytes / (1024*1024))MB)", "binary": true]
+        }
+        guard let content = String(data: data, encoding: .utf8) else {
+            return ["ok": false, "error": "not a UTF-8 text file", "binary": true]
+        }
+        return ["ok": true, "path": relPath(file), "content": content]
+    }
+
+    func writeFile(_ path: String, content: String) -> [String: Any] {
+        guard let file = resolve(path) else { return ["ok": false, "error": "path escapes root"] }
+        var isDir: ObjCBool = false
+        if FileManager.default.fileExists(atPath: file.path, isDirectory: &isDir), isDir.boolValue {
+            return ["ok": false, "error": "is a directory"]
+        }
+        do {
+            try content.data(using: .utf8)?.write(to: file, options: .atomic)
+            return ["ok": true, "path": relPath(file)]
+        } catch {
+            return ["ok": false, "error": "write failed: \(error.localizedDescription)"]
+        }
+    }
+
+    // Directories skipped when walking the whole tree (⌘P quick-open + ⌘⇧F search).
+    // Dotfiles/dot-dirs are skipped separately. These are the big non-dot dirs.
+    static let skipDirs: Set<String> = ["node_modules", "vendor", "dist", "build", ".next", "target", "Pods", "DerivedData"]
+    static let maxWalkFiles = 5000
+    static let maxSearchResults = 500
+    static let maxSearchFileBytes = 1_000_000
+
+    /// Depth-first walk of all files under root (dotfiles + heavy build dirs
+    /// skipped), capped at `limit` to keep large trees responsive.
+    func walkFiles(limit: Int) -> [URL] {
+        var out: [URL] = []
+        var stack: [URL] = [root]
+        while let dir = stack.popLast(), out.count < limit {
+            guard let names = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else { continue }
+            for name in names.sorted(by: >) {  // reversed so DFS pops in alphabetical order
+                if name.hasPrefix(".") { continue }
+                let child = dir.appendingPathComponent(name)
+                // Never follow symlinks in the bulk walk: a symlinked dir/file
+                // could point outside root (sandbox escape), and a symlink loop
+                // could make the walk non-terminating. The tree view's resolve()
+                // already rejects out-of-root symlinks; this matches that for
+                // listAll/search, which don't go through resolve().
+                let vals = try? child.resourceValues(forKeys: [.isSymbolicLinkKey, .isDirectoryKey])
+                if vals?.isSymbolicLink == true { continue }
+                let isDir: Bool
+                if let d = vals?.isDirectory { isDir = d }
+                else {
+                    var objc: ObjCBool = false
+                    FileManager.default.fileExists(atPath: child.path, isDirectory: &objc)
+                    isDir = objc.boolValue
+                }
+                if isDir {
+                    if FileService.skipDirs.contains(name) { continue }
+                    stack.append(child)
+                } else {
+                    out.append(child)
+                    if out.count >= limit { break }
+                }
+            }
+        }
+        return out
+    }
+
+    /// Flat list of every file path under root (relative), for ⌘P quick-open.
+    func listAll() -> [String: Any] {
+        let files = walkFiles(limit: FileService.maxWalkFiles).map { relPath($0) }.sorted()
+        return ["ok": true, "files": files, "truncated": files.count >= FileService.maxWalkFiles]
+    }
+
+    /// Case-insensitive substring grep across all text files under root, for
+    /// ⌘⇧F. Returns {path, line (1-based), text}. Skips binary/oversized files.
+    func search(query: String) -> [String: Any] {
+        let q = query.lowercased()
+        if q.isEmpty { return ["ok": true, "matches": [], "truncated": false] }
+        var matches: [[String: Any]] = []
+        for file in walkFiles(limit: FileService.maxWalkFiles) {
+            if matches.count >= FileService.maxSearchResults { break }
+            guard let data = try? Data(contentsOf: file), data.count <= FileService.maxSearchFileBytes,
+                  let content = String(data: data, encoding: .utf8) else { continue }
+            let rel = relPath(file)
+            var lineNo = 0
+            for line in content.split(separator: "\n", omittingEmptySubsequences: false) {
+                lineNo += 1
+                if String(line).lowercased().contains(q) {
+                    var text = String(line).trimmingCharacters(in: .whitespaces)
+                    if text.count > 200 { text = String(text.prefix(200)) }
+                    matches.append(["path": rel, "line": lineNo, "text": text])
+                    if matches.count >= FileService.maxSearchResults { break }
+                }
+            }
+        }
+        return ["ok": true, "matches": matches, "truncated": matches.count >= FileService.maxSearchResults]
+    }
+
+    /// Dispatch a parsed operation dict to the right method.
+    func perform(op: String, path: String, content: String?, query: String?) -> [String: Any] {
+        switch op {
+        case "listDir": return listDir(path)
+        case "readFile": return readFile(path)
+        case "writeFile": return writeFile(path, content: content ?? "")
+        case "listAll": return listAll()
+        case "search": return search(query: query ?? "")
+        default: return ["ok": false, "error": "unknown op: \(op)"]
+        }
+    }
+}
+
 // MARK: - Stdin Reader
 
 class StdinReader {
@@ -259,6 +461,10 @@ class AppCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NS
     static let recentFoldersKey = "webview-cli.recentFolders"
     static let maxRecentFolders = 10
 
+    // Editor mode state
+    var fileService: FileService?
+    var stdinReader: StdinReader?
+
     init(config: Config) {
         self.config = config
         super.init()
@@ -270,6 +476,8 @@ class AppCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NS
         contentController.add(self, name: "complete")
         contentController.add(self, name: "ready")
         contentController.add(self, name: "navigate")
+        contentController.add(self, name: "fileOp")
+        contentController.add(self, name: "openExternal")
 
         let errorScript = WKUserScript(
             source: """
@@ -323,6 +531,8 @@ class AppCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NS
             setupMarkdownMode()
         } else if config.folderMode {
             setupFolderMode()
+        } else if config.editorMode {
+            setupEditorMode()
         } else {
             guard let url = URL(string: config.url), url.scheme != nil else {
                 emitAndExit(status: "error", message: "Invalid URL (must include scheme): \(config.url)", code: 3)
@@ -372,6 +582,77 @@ class AppCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NS
 
         // Navigate to the renderer
         webView.load(URLRequest(url: URL(string: "agent://host/index.html")!))
+    }
+
+    func setupEditorMode() {
+        // Initialize the scoped file service. Bail early with a clear error if
+        // the root path doesn't exist.
+        guard let fs = FileService(rootPath: config.editorRoot) else {
+            emitAndExit(status: "error", message: "editor root not found: \(config.editorRoot)", code: 3)
+            return
+        }
+        fileService = fs
+
+        // Load the editor renderer + shared markdown stack + highlighter.
+        schemeHandler.loadRawResource(path: "index.html", content: editorHTML)
+        schemeHandler.loadRawResource(path: "editor.js", content: editorJS)
+        schemeHandler.loadRawResource(path: "editor.css", content: editorCSS)
+        schemeHandler.loadRawResource(path: "styles.css", content: a2uiRendererCSS)
+        schemeHandler.loadRawResource(path: "micromark.js", content: micromarkJS)
+        schemeHandler.loadRawResource(path: "markdown-renderer.js", content: markdownRendererJS)
+        schemeHandler.loadRawResource(path: "highlight.js", content: highlightJS)
+
+        // Start the stdin command reader (powers the `fileop` test seam and `close`).
+        stdinReader = StdinReader(coordinator: self)
+        stdinReader?.start()
+
+        webView.load(URLRequest(url: URL(string: "agent://host/index.html")!))
+    }
+
+    /// Tell the editor JS what root + initial selection to boot with. Called
+    /// once the renderer signals ready.
+    func bootstrapEditor() {
+        guard let fs = fileService else { return }
+        // If the user passed a file path, select it; otherwise just open the root.
+        let expanded = (config.editorRoot as NSString).expandingTildeInPath
+        let target = URL(fileURLWithPath: expanded).resolvingSymlinksInPath().standardizedFileURL
+        var isDir: ObjCBool = false
+        FileManager.default.fileExists(atPath: target.path, isDirectory: &isDir)
+        let initialFile = isDir.boolValue ? "" : fs.relPath(target)
+        let info: [String: Any] = [
+            "root": fs.root.lastPathComponent,
+            "initialFile": initialFile,
+            "comments": config.comments
+        ]
+        if let data = try? JSONSerialization.data(withJSONObject: info),
+           let json = String(data: data, encoding: .utf8) {
+            let b64 = Data(json.utf8).base64EncodedString()
+            let js = "window.__editorBoot && window.__editorBoot(new TextDecoder('utf-8').decode(Uint8Array.from(atob('\(b64)'), c => c.charCodeAt(0))))"
+            webView.evaluateJavaScript(js) { _, err in
+                if let err = err { writeStderr("[editor] boot JS error: \(err)") }
+            }
+        }
+    }
+
+    /// Run a file operation and return the JSON-serializable result dict.
+    func runFileOp(op: String, path: String, content: String?, query: String?) -> [String: Any] {
+        guard let fs = fileService else { return ["ok": false, "error": "no file service"] }
+        return fs.perform(op: op, path: path, content: content, query: query)
+    }
+
+    /// Reply to a `fileOp` JS request by calling window.__fileOpReply(id, json).
+    func replyFileOp(id: Any, result: [String: Any]) {
+        guard let data = try? JSONSerialization.data(withJSONObject: result),
+              let json = String(data: data, encoding: .utf8) else { return }
+        let b64 = Data(json.utf8).base64EncodedString()
+        let idLiteral: String
+        if let n = id as? Int { idLiteral = String(n) }
+        else if let s = id as? String { idLiteral = "\"\(s)\"" }
+        else { idLiteral = "0" }
+        let js = "window.__fileOpReply && window.__fileOpReply(\(idLiteral), new TextDecoder('utf-8').decode(Uint8Array.from(atob('\(b64)'), c => c.charCodeAt(0))))"
+        webView.evaluateJavaScript(js) { _, err in
+            if let err = err { writeStderr("[editor] fileOp reply error: \(err)") }
+        }
     }
 
     func readA2UIFromStdin() {
@@ -506,7 +787,15 @@ class AppCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NS
 
     // MARK: - Stdin Commands (for agent:// mode)
 
-    func handleStdinCommand(_ line: String) {
+    func handleStdinCommand(_ chunk: String) {
+        // A single read may contain multiple newline-delimited commands.
+        for line in chunk.split(separator: "\n", omittingEmptySubsequences: true) {
+            handleStdinLine(String(line).trimmingCharacters(in: .whitespaces))
+        }
+    }
+
+    private func handleStdinLine(_ line: String) {
+        guard !line.isEmpty else { return }
         guard let data = line.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let type = json["type"] as? String else {
@@ -523,6 +812,15 @@ class AppCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NS
                     webView.load(URLRequest(url: URL(string: navigateTo)!))
                 }
             }
+        case "fileop":
+            // Test/debug seam: run a file op and emit the result on stdout, then exit.
+            // The GUI path uses the `fileOp` message handler instead.
+            let op = json["op"] as? String ?? ""
+            let path = json["path"] as? String ?? ""
+            let content = json["content"] as? String
+            let query = json["query"] as? String
+            let result = runFileOp(op: op, path: path, content: content, query: query)
+            emitAndExit(status: "fileop", data: result, code: 0)
         case "close":
             emitAndExit(status: "cancelled", code: 1)
         default:
@@ -550,6 +848,23 @@ class AppCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NS
                let path = body["path"] as? String {
                 handleNavigation(to: path)
             }
+        case "fileOp":
+            guard let body = message.body as? [String: Any] else { return }
+            let id = body["id"] ?? 0
+            let op = body["op"] as? String ?? ""
+            let path = body["path"] as? String ?? ""
+            let content = body["content"] as? String
+            let query = body["query"] as? String
+            let result = runFileOp(op: op, path: path, content: content, query: query)
+            replyFileOp(id: id, result: result)
+        case "openExternal":
+            if let body = message.body as? [String: Any],
+               let urlStr = body["url"] as? String,
+               let url = URL(string: urlStr),
+               let scheme = url.scheme?.lowercased(),
+               scheme == "http" || scheme == "https" {
+                NSWorkspace.shared.open(url)
+            }
         default: break
         }
     }
@@ -561,7 +876,38 @@ class AppCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NS
             // A2UI renderer JS is loaded — safe to inject data now
             rendererReady = true
             flushA2UIIfReady()
+        } else if config.editorMode {
+            rendererReady = true
+            bootstrapEditor()
         }
+    }
+
+    // MARK: - Navigation policy (editor mode link guard)
+
+    func webView(_ webView: WKWebView,
+                 decidePolicyFor navigationAction: WKNavigationAction,
+                 decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        guard config.editorMode, let url = navigationAction.request.url else {
+            decisionHandler(.allow); return
+        }
+        let scheme = url.scheme?.lowercased() ?? ""
+        // Allow ONLY the initial renderer document (agent://host/index.html) and
+        // about: pages. Subresources (editor.js, styles.css, ...) load as
+        // subresource requests and never reach this navigation hook, so they're
+        // unaffected. Critically, we do NOT blanket-allow agent:// — a relative
+        // markdown link that slipped past the JS click handler would resolve to
+        // agent://host/<file>, 404 in the scheme handler, and fail-navigate the
+        // whole editor closed. Cancelling it keeps the editor alive; the JS
+        // handleLink path is what actually opens internal links.
+        if scheme == "about" || (scheme == "agent" && (url.path == "/index.html" || url.path == "/" || url.path.isEmpty)) {
+            decisionHandler(.allow); return
+        }
+        // Everything else must NOT navigate the webview. External links open in
+        // the system browser; internal links are handled by the JS openFile path.
+        if scheme == "http" || scheme == "https" {
+            NSWorkspace.shared.open(url)
+        }
+        decisionHandler(.cancel)
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
@@ -1864,6 +2210,817 @@ let markdownRendererJS = #"""
 """#
 
 
+// MARK: - Embedded Editor (--editor mode)
+
+let editorHTML = #"""
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Editor</title>
+<link rel="stylesheet" href="agent://host/styles.css">
+<link rel="stylesheet" href="agent://host/editor.css">
+</head>
+<body>
+<div id="editor-app">
+  <aside id="editor-sidebar">
+    <div id="editor-root-name" class="editor-root-name"></div>
+    <div id="editor-tree" class="editor-tree"></div>
+  </aside>
+  <main id="editor-main">
+    <div id="editor-tabbar" class="editor-tabbar"></div>
+    <div id="editor-content" class="editor-content"></div>
+  </main>
+</div>
+<script src="agent://host/micromark.js"></script>
+<script src="agent://host/markdown-renderer.js"></script>
+<script src="agent://host/highlight.js"></script>
+<script src="agent://host/editor.js"></script>
+</body>
+</html>
+"""#
+
+let editorCSS = #"""
+html, body { height: 100%; padding: 0; margin: 0; overflow: hidden; }
+#editor-app { display: flex; flex-direction: row; height: 100vh; width: 100vw; }
+#editor-sidebar {
+  width: 240px; min-width: 160px; max-width: 420px; flex: 0 0 auto;
+  background: var(--surface); border-right: 1px solid var(--border);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.editor-root-name {
+  padding: 10px 12px; font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.6px; color: var(--muted); border-bottom: 1px solid var(--border);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.editor-tree { flex: 1; overflow-y: auto; padding: 4px 0; font-size: 13px; }
+.editor-tree-row {
+  display: flex; align-items: center; gap: 6px; padding: 3px 8px;
+  cursor: pointer; white-space: nowrap; user-select: none; border-radius: 4px;
+}
+.editor-tree-row:hover { background: var(--surface-2); }
+.editor-tree-row.active { background: var(--accent); color: #fff; }
+.editor-tree-icon { width: 12px; display: inline-block; color: var(--muted); font-size: 10px; flex: 0 0 auto; }
+.editor-tree-row.active .editor-tree-icon { color: #fff; }
+.editor-tree-label { overflow: hidden; text-overflow: ellipsis; }
+.editor-tree-error { padding: 6px 12px; color: var(--danger); font-size: 11px; }
+.editor-tree-children { }
+#editor-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: var(--bg); }
+.editor-tabbar {
+  display: flex; align-items: center; gap: 8px; padding: 6px 12px;
+  border-bottom: 1px solid var(--border); min-height: 36px;
+}
+.editor-tab-name { font-size: 12px; color: var(--text); font-weight: 600; }
+.editor-tab-btn {
+  padding: 4px 12px; font-size: 11px; border: 1px solid var(--border); border-radius: 5px;
+  background: var(--surface); color: var(--text); cursor: pointer;
+}
+.editor-tab-btn:hover:not(:disabled) { filter: brightness(1.15); }
+.editor-tab-btn:disabled { opacity: 0.4; cursor: default; }
+.editor-tab-btn.save-active { background: var(--success); color: #1a1a1c; border-color: transparent; }
+.editor-content { flex: 1; overflow: auto; padding: 16px 20px; display: flex; flex-direction: column; }
+.editor-empty { color: var(--muted); font-size: 13px; font-style: italic; }
+.editor-source {
+  flex: 1; width: 100%; min-height: 200px; padding: 10px 12px;
+  font: 13px/1.6 'SF Mono', Monaco, Menlo, 'Courier New', monospace;
+  background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; resize: none; tab-size: 4;
+}
+.editor-source:focus { outline: none; border-color: var(--accent); }
+.editor-md-tabs { display: flex; gap: 4px; margin-bottom: 10px; border-bottom: 1px solid var(--border); }
+.editor-md-tab {
+  padding: 5px 12px; font-size: 11px; background: transparent; border: none;
+  border-bottom: 2px solid transparent; color: var(--muted); cursor: pointer;
+}
+.editor-md-tab:hover { color: var(--text); }
+.editor-md-tab.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+.editor-md-preview { flex: 1; overflow: auto; }
+
+/* syntax highlight tokens (shared by code editor + fenced markdown blocks) */
+.hl-kw { color: #ff7ab2; }
+.hl-str { color: #9ee37d; }
+.hl-num { color: #d0a0ff; }
+.hl-com { color: #6d7686; font-style: italic; }
+
+/* code editor: a highlighted <pre> behind a transparent-text <textarea> */
+.editor-code { position: relative; flex: 1; min-height: 200px; overflow: hidden; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
+.editor-code-hl, .editor-code-input {
+  margin: 0; padding: 10px 12px; border: 0;
+  font: 13px/1.6 'SF Mono', Monaco, Menlo, 'Courier New', monospace;
+  tab-size: 4; white-space: pre; word-wrap: normal;
+  position: absolute; inset: 0; overflow: auto;
+}
+.editor-code-hl { color: var(--text); pointer-events: none; z-index: 1; }
+.editor-code-hl code { font: inherit; }
+.editor-code-input {
+  z-index: 2; resize: none; background: transparent; color: transparent;
+  caret-color: var(--text); -webkit-text-fill-color: transparent;
+}
+.editor-code-input:focus { outline: none; }
+
+/* frontmatter metadata block */
+.editor-md-frontmatter {
+  border: 1px solid var(--border); border-radius: 6px; background: var(--surface);
+  padding: 8px 12px; margin-bottom: 14px; font-size: 12px;
+}
+.editor-fm-row { display: flex; gap: 8px; padding: 2px 0; }
+.editor-fm-key { color: var(--muted); font-weight: 600; min-width: 90px; }
+.editor-fm-val { color: var(--text); word-break: break-word; }
+
+/* submit button + comment composer */
+.editor-tab-btn.submit-btn { background: var(--accent); color: #fff; border-color: transparent; }
+.a2ui-markdown-preview [data-has-comment], .editor-md-preview [data-has-comment] {
+  background: rgba(255,193,7,0.08); border-left: 2px solid #ffc107; padding-left: 6px;
+}
+.editor-comment-composer {
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px;
+  padding: 8px; margin: 6px 0;
+}
+.editor-comment-body {
+  width: 100%; padding: 6px; border: 1px solid var(--border); border-radius: 5px;
+  background: var(--bg); color: var(--text); font: 12px/1.5 Monaco, monospace;
+  resize: vertical; min-height: 54px; margin-bottom: 6px;
+}
+.editor-comment-body:focus { outline: none; border-color: var(--accent); }
+.editor-comment-actions { display: flex; gap: 6px; justify-content: flex-end; }
+.editor-comment-actions button {
+  padding: 4px 12px; font-size: 11px; border: 1px solid var(--border); border-radius: 5px;
+  background: var(--surface); color: var(--text); cursor: pointer;
+}
+.editor-comment-actions button.save { background: var(--success); color: #1a1a1c; border-color: transparent; }
+.editor-comment-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* command palette (⌘P) + search (⌘⇧F) overlay */
+.editor-overlay {
+  position: fixed; inset: 0; z-index: 1000;
+  background: rgba(0,0,0,0.45);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding-top: 12vh;
+}
+.editor-palette {
+  width: min(640px, 80vw); max-height: 64vh; display: flex; flex-direction: column;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 16px 48px rgba(0,0,0,0.5); overflow: hidden;
+}
+.editor-palette-input {
+  width: 100%; padding: 12px 14px; border: 0; border-bottom: 1px solid var(--border);
+  background: var(--bg); color: var(--text); font: 14px -apple-system, system-ui, sans-serif;
+}
+.editor-palette-input:focus { outline: none; }
+.editor-palette-list { overflow-y: auto; padding: 4px; }
+.editor-palette-row {
+  padding: 6px 10px; border-radius: 6px; font: 12px 'SF Mono', Monaco, monospace;
+  color: var(--text); cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.editor-palette-row:hover { background: var(--surface-2); }
+.editor-palette-row.selected { background: var(--accent); color: #fff; }
+.editor-palette-empty { padding: 10px; color: var(--muted); font-size: 12px; font-style: italic; }
+.editor-search-file {
+  padding: 8px 10px 2px; font: 600 11px 'SF Mono', Monaco, monospace; color: var(--muted);
+  text-transform: none; position: sticky; top: 0; background: var(--surface);
+}
+.editor-search-match {
+  display: flex; gap: 10px; padding: 4px 10px; border-radius: 6px; cursor: pointer;
+  font: 12px 'SF Mono', Monaco, monospace; align-items: baseline;
+}
+.editor-search-match:hover { background: var(--surface-2); }
+.editor-search-line { color: var(--muted); min-width: 34px; text-align: right; flex: 0 0 auto; }
+.editor-search-text { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+"""#
+
+// Compact, dependency-free syntax highlighter. A single generic scanner is
+// driven by a per-language config (keyword set, comment delimiters, string
+// quotes). Returns an HTML string of escaped text with <span class="hl-*">
+// wrappers, or null for an unknown language (caller falls back to plain text).
+// Kept deliberately small to protect the tiny-binary identity — this is not a
+// full grammar engine, just enough to make code readable.
+let highlightJS = #"""
+(function(){
+  'use strict';
+
+  // Shared keyword groups.
+  var JS = "break case catch class const continue debugger default delete do else export extends finally for function if import in instanceof let new return super switch this throw try typeof var void while with yield async await of static get set null undefined true false NaN Infinity";
+  var configs = {
+    javascript: { kw: JS + " implements interface enum type namespace declare readonly public private protected as is keyof infer", line: "//", block: ["/*", "*/"], strings: ["'", '"', "`"] },
+    python:     { kw: "False None True and as assert async await break class continue def del elif else except finally for from global if import in is lambda nonlocal not or pass raise return try while with yield self print", line: "#", block: null, strings: ["'", '"'] },
+    go:         { kw: "break default func interface select case defer go map struct chan else goto package switch const fallthrough if range type continue for import return var nil true false iota string int int64 bool byte rune error", line: "//", block: ["/*", "*/"], strings: ['"', "`"] },
+    rust:       { kw: "as break const continue crate dyn else enum extern false fn for if impl in let loop match mod move mut pub ref return self Self static struct super trait true type unsafe use where while async await dyn", line: "//", block: ["/*", "*/"], strings: ['"'] },
+    swift:      { kw: "associatedtype class deinit enum extension fileprivate func import init inout internal let open operator private protocol public rethrows static struct subscript typealias var break case continue default defer do else fallthrough for guard if in repeat return switch where while as catch is nil super self throw throws try true false weak unowned lazy", line: "//", block: ["/*", "*/"], strings: ['"'] },
+    clike:      { kw: "auto break case char const continue default do double else enum extern float for goto if int long register return short signed sizeof static struct switch typedef union unsigned void volatile while class public private protected virtual override new delete this true false nullptr namespace template typename using bool string", line: "//", block: ["/*", "*/"], strings: ['"', "'"] },
+    json:       { kw: "true false null", line: null, block: null, strings: ['"'] },
+    yaml:       { kw: "true false null yes no on off", line: "#", block: null, strings: ['"', "'"] },
+    bash:       { kw: "if then else elif fi case esac for while do done in function return local export readonly declare echo cd exit source set unset trap", line: "#", block: null, strings: ['"', "'"] },
+    sql:        { kw: "SELECT FROM WHERE INSERT UPDATE DELETE CREATE DROP ALTER TABLE INDEX VIEW JOIN LEFT RIGHT INNER OUTER ON AS AND OR NOT NULL IS IN LIKE BETWEEN GROUP BY ORDER HAVING LIMIT OFFSET DISTINCT COUNT SUM AVG MIN MAX INTO VALUES SET PRIMARY KEY FOREIGN REFERENCES DEFAULT", line: "--", block: ["/*", "*/"], strings: ["'"] },
+    css:        { kw: "important inherit initial unset none auto flex grid block inline absolute relative fixed sticky", line: null, block: ["/*", "*/"], strings: ['"', "'"] }
+  };
+
+  var EXT = {
+    js: "javascript", mjs: "javascript", cjs: "javascript", jsx: "javascript",
+    ts: "javascript", tsx: "javascript", py: "python", go: "go", rs: "rust",
+    swift: "swift", json: "json", yml: "yaml", yaml: "yaml", sh: "bash",
+    bash: "bash", zsh: "bash", c: "clike", h: "clike", cpp: "clike", cc: "clike",
+    cxx: "clike", hpp: "clike", java: "clike", cs: "clike", kt: "clike",
+    css: "css", scss: "css", sql: "sql", toml: "yaml", ini: "yaml"
+  };
+
+  function esc(s){ return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+  function span(cls, txt){ return '<span class="hl-' + cls + '">' + esc(txt) + '</span>'; }
+  function isWordStart(c){ return /[A-Za-z_$]/.test(c); }
+  function isWord(c){ return /[A-Za-z0-9_$]/.test(c); }
+
+  function resolveLang(lang){
+    if (!lang) return null;
+    var key = String(lang).toLowerCase();
+    if (configs[key]) return key;
+    if (EXT[key]) return EXT[key];
+    return null;
+  }
+
+  // lang may be a language name OR a filename — both are resolved.
+  window.highlightCode = function(code, lang){
+    var key = resolveLang(lang);
+    if (!key) {
+      // Maybe `lang` is a filename — try its extension.
+      var dot = String(lang || "").lastIndexOf(".");
+      if (dot >= 0) key = resolveLang(String(lang).slice(dot + 1));
+    }
+    var cfg = key && configs[key];
+    if (!cfg) return null;
+    var kwset = new Set(cfg.kw.split(/\s+/));
+    var out = "";
+    var i = 0;
+    var n = code.length;
+    var prevWord = false;
+    while (i < n) {
+      var c = code[i];
+      if (cfg.line && code.startsWith(cfg.line, i)) {
+        var j = code.indexOf("\n", i); if (j < 0) j = n;
+        out += span("com", code.slice(i, j)); i = j; prevWord = false; continue;
+      }
+      if (cfg.block && code.startsWith(cfg.block[0], i)) {
+        var k = code.indexOf(cfg.block[1], i + cfg.block[0].length);
+        k = k < 0 ? n : k + cfg.block[1].length;
+        out += span("com", code.slice(i, k)); i = k; prevWord = false; continue;
+      }
+      if (cfg.strings && cfg.strings.indexOf(c) >= 0) {
+        var q = c; var p = i + 1;
+        while (p < n) { if (code[p] === "\\") { p += 2; continue; } if (code[p] === q) { p++; break; } p++; }
+        out += span("str", code.slice(i, p)); i = p; prevWord = false; continue;
+      }
+      if (/[0-9]/.test(c) && !prevWord) {
+        var m = i; while (m < n && /[0-9a-fA-FxXoObB._]/.test(code[m])) m++;
+        out += span("num", code.slice(i, m)); i = m; prevWord = false; continue;
+      }
+      if (isWordStart(c)) {
+        var w = i; while (w < n && isWord(code[w])) w++;
+        var word = code.slice(i, w);
+        out += kwset.has(word) ? span("kw", word) : esc(word);
+        i = w; prevWord = true; continue;
+      }
+      out += esc(c); i++; prevWord = isWord(c);
+    }
+    return out;
+  };
+
+  // Map a filename/extension to a language name (or null).
+  window.highlightLangFor = function(name){ return resolveLang(name) || (function(){
+    var dot = String(name || "").lastIndexOf("."); return dot >= 0 ? resolveLang(String(name).slice(dot + 1)) : null;
+  })(); };
+
+  // Highlight fenced code blocks (<pre><code class="language-x">) inside a
+  // rendered markdown container, in place.
+  window.highlightCodeBlocks = function(container){
+    var blocks = container.querySelectorAll("pre > code");
+    for (var b = 0; b < blocks.length; b++) {
+      var codeEl = blocks[b];
+      var cls = codeEl.className || "";
+      var match = /language-([\w+-]+)/.exec(cls);
+      var lang = match ? match[1] : null;
+      var html = window.highlightCode(codeEl.textContent, lang);
+      if (html != null) { codeEl.innerHTML = html; codeEl.classList.add("hl"); }
+    }
+  };
+})();
+"""#
+
+let editorJS = #"""
+(function(){
+  'use strict';
+  let ROOT = '';
+  let opSeq = 0;
+  const opCb = new Map();
+
+  // ---- fileOp bridge (JS -> Swift -> __fileOpReply) ----
+  function fileOp(op, path, content, query){
+    return new Promise((resolve) => {
+      const id = ++opSeq;
+      const mh = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.fileOp;
+      if (mh) {
+        opCb.set(id, resolve);
+        mh.postMessage({ id: id, op: op, path: path, content: content == null ? null : content, query: query == null ? null : query });
+      } else if (window.__fileOpMock) {
+        // jsdom / test path: a mock services the request synchronously or via promise.
+        Promise.resolve(window.__fileOpMock(op, path, content, query)).then(resolve);
+      } else {
+        resolve({ ok: false, error: 'no bridge' });
+      }
+    });
+  }
+  window.__fileOpReply = function(id, json){
+    const cb = opCb.get(id);
+    if (!cb) return;
+    opCb.delete(id);
+    let r;
+    try { r = JSON.parse(json); } catch(e) { r = { ok: false, error: 'bad reply json' }; }
+    cb(r);
+  };
+  window.__editorFileOp = fileOp;  // exposed for tests
+
+  function el(tag, cls, txt){
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (txt != null) e.textContent = txt;
+    return e;
+  }
+
+  // ---- link handling ----
+  function openExternal(url){
+    const mh = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.openExternal;
+    if (mh) mh.postMessage({ url: url });
+    else if (window.__openExternalMock) window.__openExternalMock(url);
+  }
+
+  // Resolve a relative href against the directory of `fromFile` (POSIX-style,
+  // collapsing . and ..). The Swift FileService re-checks scoping, so an
+  // escaping result simply fails to open rather than reaching outside root.
+  function resolvePath(fromFile, rel){
+    const baseParts = (fromFile || '').split('/');
+    baseParts.pop();  // drop the filename, keep the directory
+    if (rel.charAt(0) === '/') { baseParts.length = 0; rel = rel.slice(1); }  // root-relative
+    for (const p of rel.split('/')) {
+      if (p === '' || p === '.') continue;
+      if (p === '..') { if (baseParts.length) baseParts.pop(); }
+      else baseParts.push(p);
+    }
+    return baseParts.join('/');
+  }
+  window.__editorResolvePath = resolvePath;  // exposed for tests
+
+  function handleLink(href, fromFile){
+    if (!href) return;
+    if (href.charAt(0) === '#') return;  // in-page anchor — let the browser handle
+    if (/^[a-z][a-z0-9+.-]*:/i.test(href)) {
+      // Has a scheme → external. Only http(s) are opened in the system browser.
+      const scheme = href.slice(0, href.indexOf(':')).toLowerCase();
+      if (scheme === 'http' || scheme === 'https') openExternal(href);
+      return;
+    }
+    // Relative path → open in the editor (strip any #fragment / ?query first).
+    const clean = href.split('#')[0].split('?')[0];
+    if (clean) openFile(resolvePath(fromFile, clean));
+  }
+  window.__editorHandleLink = handleLink;  // exposed for tests
+
+  // ---- frontmatter (rendered as a metadata block, not vanished) ----
+  // renderMarkdown strips the YAML frontmatter from the preview body; we
+  // surface it here as a key/value block pinned to the top of the preview.
+  function renderFrontmatterInto(text, preview){
+    const m = /^---\r?\n([\s\S]*?)\r?\n---(\r?\n|$)/.exec(text);
+    if (!m) return;
+    const box = el('div', 'editor-md-frontmatter');
+    for (const line of m[1].split(/\r?\n/)) {
+      const idx = line.indexOf(':');
+      if (idx < 0) continue;
+      const key = line.slice(0, idx).trim();
+      if (!key) continue;
+      const row = el('div', 'editor-fm-row');
+      row.appendChild(el('span', 'editor-fm-key', key));
+      row.appendChild(el('span', 'editor-fm-val', line.slice(idx + 1).trim()));
+      box.appendChild(row);
+    }
+    if (box.children.length) preview.insertBefore(box, preview.firstChild);
+  }
+  window.__editorRenderFrontmatter = renderFrontmatterInto;  // exposed for tests
+
+  // ---- comments + submit (preserves the markdown-review return-to-Claude flow) ----
+  let COMMENTS = false;
+  const fileComments = {};  // path -> [ {source_line_start, source_line_end, quoted_text, body} ]
+  function commentsFor(path){ return fileComments[path] || (fileComments[path] = []); }
+  function allComments(){
+    const out = [];
+    for (const p in fileComments) for (const c of fileComments[p]) out.push(Object.assign({ file: p }, c));
+    return out;
+  }
+  window.__editorAllComments = allComments;  // exposed for tests
+
+  function openComposer(block, path, preview){
+    if (preview.querySelector('.editor-comment-composer')) preview.querySelector('.editor-comment-composer').remove();
+    const startLine = parseInt(block.dataset.srcStart, 10);
+    const endLine = parseInt(block.dataset.srcEnd, 10);
+    let quoted = (block.textContent || '').trim().split('\n')[0];
+    if (quoted.length > 200) quoted = quoted.slice(0, 200);
+    const composer = el('div', 'editor-comment-composer');
+    const ta = el('textarea', 'editor-comment-body'); ta.placeholder = 'Add a comment…';
+    composer.appendChild(ta);
+    const actions = el('div', 'editor-comment-actions');
+    const cancel = el('button', null, 'Cancel');
+    cancel.addEventListener('click', () => composer.remove());
+    const save = el('button', 'save', 'Save'); save.disabled = true;
+    ta.addEventListener('input', () => { save.disabled = !ta.value.trim(); });
+    ta.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); composer.remove(); }
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !save.disabled) { e.preventDefault(); save.click(); }
+    });
+    save.addEventListener('click', () => {
+      const body = ta.value.trim(); if (!body) return;
+      commentsFor(path).push({ source_line_start: startLine, source_line_end: endLine, quoted_text: quoted, body: body });
+      block.setAttribute('data-has-comment', 'true');
+      composer.remove();
+      renderTabbar(current.path, current.dirty);  // refresh Submit count
+    });
+    actions.appendChild(cancel); actions.appendChild(save);
+    composer.appendChild(actions);
+    block.insertAdjacentElement('afterend', composer);
+    ta.focus();
+  }
+  window.__editorOpenComposer = openComposer;  // exposed for tests
+
+  function attachComments(preview, path){
+    preview.addEventListener('click', (e) => {
+      if (e.target.closest('a')) return;                       // links win
+      if (e.target.closest('.editor-comment-composer')) return;
+      const sel = window.getSelection && window.getSelection();
+      if (sel && !sel.isCollapsed && sel.toString().trim()) return;  // don't hijack selection
+      const block = e.target.closest('[data-src-start]');
+      if (block) openComposer(block, path, preview);
+    });
+  }
+
+  function submitToClaude(){
+    const payload = {
+      action: 'submit',
+      file: current.path,
+      edited_text: current.getText ? current.getText() : '',
+      comments: allComments()
+    };
+    const mh = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.complete;
+    if (mh) mh.postMessage(payload);
+    else if (window.__completeMock) window.__completeMock(payload);
+  }
+  window.__editorSubmit = submitToClaude;  // exposed for tests
+
+  // ---- file tree (lazy-expanding) ----
+  const expanded = new Set();
+  async function buildTreeLevel(path, container, depth){
+    const res = await fileOp('listDir', path);
+    if (!res || !res.ok) {
+      container.appendChild(el('div', 'editor-tree-error', '! ' + ((res && res.error) || 'error')));
+      return;
+    }
+    for (const entry of res.entries) {
+      const row = el('div', 'editor-tree-row ' + (entry.type === 'dir' ? 'is-dir' : 'is-file'));
+      row.style.paddingLeft = (depth * 12 + 8) + 'px';
+      row.dataset.path = entry.path;
+      row.dataset.type = entry.type;
+      const icon = el('span', 'editor-tree-icon', entry.type === 'dir' ? '▸' : '·');
+      row.appendChild(icon);
+      row.appendChild(el('span', 'editor-tree-label', entry.name));
+      container.appendChild(row);
+      if (entry.type === 'dir') {
+        const kids = el('div', 'editor-tree-children');
+        kids.style.display = 'none';
+        container.appendChild(kids);
+        row.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          if (expanded.has(entry.path)) {
+            expanded.delete(entry.path); kids.style.display = 'none'; icon.textContent = '▸';
+          } else {
+            expanded.add(entry.path); kids.style.display = ''; icon.textContent = '▾';
+            if (!kids.dataset.loaded) { kids.dataset.loaded = '1'; await buildTreeLevel(entry.path, kids, depth + 1); }
+          }
+        });
+      } else {
+        row.addEventListener('click', (e) => { e.stopPropagation(); openFile(entry.path); });
+      }
+    }
+  }
+  async function renderTree(){
+    const tree = document.getElementById('editor-tree');
+    tree.innerHTML = '';
+    await buildTreeLevel('', tree, 0);
+  }
+  window.__editorRenderTree = renderTree;  // exposed for tests
+
+  // ---- open / edit / save ----
+  const MD_EXT = /\.(md|markdown|mdown|mkd|mdx)$/i;
+  let current = { path: null, original: '', dirty: false, getText: null };
+
+  function markActive(path){
+    document.querySelectorAll('.editor-tree-row.is-file').forEach(r => {
+      r.classList.toggle('active', r.dataset.path === path);
+    });
+  }
+
+  function renderTabbar(path, dirty){
+    const bar = document.getElementById('editor-tabbar');
+    bar.innerHTML = '';
+    if (!path) return;
+    const name = path.split('/').pop();
+    bar.appendChild(el('span', 'editor-tab-name', (dirty ? '● ' : '') + name));
+    const spacer = el('span', 'editor-tab-spacer'); spacer.style.flex = '1'; bar.appendChild(spacer);
+    const save = el('button', 'editor-tab-btn' + (dirty ? ' save-active' : ''), 'Save');
+    save.title = 'Save (⌘S)';
+    save.disabled = !dirty;
+    save.addEventListener('click', saveCurrent);
+    bar.appendChild(save);
+    if (COMMENTS) {
+      const n = allComments().length;
+      const submit = el('button', 'editor-tab-btn submit-btn', 'Submit' + (n ? ' (' + n + ')' : ''));
+      submit.title = 'Submit comments to Claude and close (⌘↵)';
+      submit.addEventListener('click', submitToClaude);
+      bar.appendChild(submit);
+    }
+  }
+
+  function setDirty(d){ current.dirty = d; renderTabbar(current.path, d); }
+
+  async function saveCurrent(){
+    if (!current.path || !current.dirty) return;
+    const text = current.getText ? current.getText() : current.original;
+    const res = await fileOp('writeFile', current.path, text);
+    if (res && res.ok) { current.original = text; setDirty(false); }
+    else { console.error('save failed', res); }
+  }
+  window.__editorSave = saveCurrent;  // exposed for tests
+
+  // Move the caret/scroll of a textarea to a 1-based line and focus it.
+  function revealInTextarea(ta, line){
+    const lines = ta.value.split('\n');
+    let off = 0;
+    for (let i = 0; i < line - 1 && i < lines.length; i++) off += lines[i].length + 1;
+    const len = lines[line - 1] ? lines[line - 1].length : 0;
+    ta.focus();
+    try { ta.setSelectionRange(off, off + len); } catch (e) {}
+    const lh = parseFloat(getComputedStyle(ta).lineHeight) || 18;
+    ta.scrollTop = Math.max(0, (line - 1) * lh - ta.clientHeight / 2);
+  }
+
+  function openText(path, text, content){
+    const ta = el('textarea', 'editor-source');
+    ta.value = text; ta.spellcheck = false;
+    ta.addEventListener('input', () => setDirty(ta.value !== current.original));
+    current.getText = () => ta.value;
+    current.revealLine = (n) => revealInTextarea(ta, n);
+    content.appendChild(ta);
+    renderTabbar(path, false);
+    ta.focus();
+  }
+
+  // Highlighted code editor: a read-painted <pre> sits behind a transparent
+  // <textarea> so editing stays native while tokens are colored live.
+  function openCode(path, text, content, lang){
+    const wrap = el('div', 'editor-code');
+    const pre = el('pre', 'editor-code-hl'); pre.setAttribute('aria-hidden', 'true');
+    const codeEl = el('code');
+    pre.appendChild(codeEl);
+    const ta = el('textarea', 'editor-code-input'); ta.value = text; ta.spellcheck = false;
+    function escapeHtml(s){ return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+    function paint(){
+      const html = window.highlightCode ? window.highlightCode(ta.value, lang) : null;
+      // Trailing newline keeps the last line scroll-aligned with the textarea.
+      codeEl.innerHTML = (html != null ? html : escapeHtml(ta.value)) + '\n';
+    }
+    paint();
+    ta.addEventListener('input', () => { paint(); setDirty(ta.value !== current.original); });
+    ta.addEventListener('scroll', () => { pre.scrollTop = ta.scrollTop; pre.scrollLeft = ta.scrollLeft; });
+    current.getText = () => ta.value;
+    current.revealLine = (n) => revealInTextarea(ta, n);
+    wrap.appendChild(pre); wrap.appendChild(ta);
+    content.appendChild(wrap);
+    renderTabbar(path, false);
+    ta.focus();
+  }
+
+  function openMarkdown(path, text, content){
+    const tabs = el('div', 'editor-md-tabs');
+    const tPrev = el('button', 'editor-md-tab active', 'Preview'); tPrev.dataset.tab = 'preview';
+    const tSrc = el('button', 'editor-md-tab', 'Source'); tSrc.dataset.tab = 'source';
+    tabs.appendChild(tPrev); tabs.appendChild(tSrc);
+    content.appendChild(tabs);
+    const preview = el('div', 'editor-md-preview a2ui-markdown-preview');
+    const ta = el('textarea', 'editor-source'); ta.value = text; ta.spellcheck = false; ta.style.display = 'none';
+    content.appendChild(preview); content.appendChild(ta);
+    // Intercept link clicks: external → system browser, internal → open in editor.
+    // Without this, a relative href resolves to agent://host/... and WKWebView
+    // would try to navigate, blowing away the renderer.
+    preview.addEventListener('click', (e) => {
+      const a = e.target.closest('a');
+      if (!a) return;
+      e.preventDefault();
+      handleLink(a.getAttribute('href') || '', path);
+    });
+    function rerender(){
+      if (window.renderMarkdown) window.renderMarkdown(ta.value, preview, {});
+      if (window.highlightCodeBlocks) window.highlightCodeBlocks(preview);
+      renderFrontmatterInto(ta.value, preview);
+    }
+    rerender();
+    if (COMMENTS) attachComments(preview, path);
+    ta.addEventListener('input', () => setDirty(ta.value !== current.original));
+    current.getText = () => ta.value;
+    function switchTab(name){
+      if (name === 'preview') {
+        rerender();
+        preview.style.display = ''; ta.style.display = 'none';
+        tPrev.classList.add('active'); tSrc.classList.remove('active');
+      } else {
+        preview.style.display = 'none'; ta.style.display = '';
+        tSrc.classList.add('active'); tPrev.classList.remove('active');
+      }
+    }
+    tPrev.addEventListener('click', () => switchTab('preview'));
+    tSrc.addEventListener('click', () => switchTab('source'));
+    // Search matches reference source line numbers, so reveal in the Source tab.
+    current.revealLine = (n) => { switchTab('source'); revealInTextarea(ta, n); };
+    renderTabbar(path, false);
+  }
+
+  async function openFile(path, opts){
+    const res = await fileOp('readFile', path);
+    const content = document.getElementById('editor-content');
+    content.innerHTML = '';
+    if (!res || !res.ok) {
+      content.appendChild(el('div', 'editor-empty',
+        ((res && res.binary) ? 'Binary or oversized file: ' : 'Cannot open: ') + ((res && res.error) || path)));
+      current = { path: null, original: '', dirty: false, getText: null };
+      renderTabbar(null, false);
+      return;
+    }
+    current = { path: path, original: res.content, dirty: false, getText: null, revealLine: null };
+    markActive(path);
+    if (MD_EXT.test(path)) {
+      openMarkdown(path, res.content, content);
+    } else {
+      const lang = window.highlightLangFor ? window.highlightLangFor(path) : null;
+      if (lang) openCode(path, res.content, content, lang);
+      else openText(path, res.content, content);
+    }
+    if (opts && opts.line && current.revealLine) current.revealLine(opts.line);
+  }
+  window.__editorOpenFile = openFile;  // exposed for tests
+  window.__editorCurrent = () => current;  // exposed for tests
+
+  // ---- command palette (⌘P quick-open) + content search (⌘⇧F) ----
+  let allFilesCache = null;
+  async function ensureFileList(){
+    if (allFilesCache) return allFilesCache;
+    const res = await fileOp('listAll');
+    allFilesCache = (res && res.ok) ? res.files : [];
+    return allFilesCache;
+  }
+
+  // Subsequence fuzzy match: returns a score (higher = better) or -1 for no match.
+  // Bonuses for adjacency and matching at a path-segment boundary.
+  function fuzzyScore(query, str){
+    query = query.toLowerCase(); str = str.toLowerCase();
+    let qi = 0, score = 0, last = -2;
+    for (let i = 0; i < str.length && qi < query.length; i++) {
+      if (str[i] === query[qi]) {
+        score += (i === last + 1) ? 3 : 1;
+        if (i === 0 || str[i - 1] === '/') score += 4;
+        last = i; qi++;
+      }
+    }
+    return qi === query.length ? score : -1;
+  }
+  window.__editorFuzzyScore = fuzzyScore;  // exposed for tests
+
+  function closeOverlay(){ const ov = document.querySelector('.editor-overlay'); if (ov) ov.remove(); }
+  window.__editorCloseOverlay = closeOverlay;
+  function buildOverlay(id){
+    closeOverlay();
+    const ov = el('div', 'editor-overlay'); ov.id = id;
+    const panel = el('div', 'editor-palette');
+    ov.appendChild(panel);
+    ov.addEventListener('mousedown', (e) => { if (e.target === ov) closeOverlay(); });
+    document.body.appendChild(ov);
+    return panel;
+  }
+
+  async function openQuickOpen(){
+    const panel = buildOverlay('editor-quickopen');
+    const input = el('input', 'editor-palette-input'); input.type = 'text'; input.placeholder = 'Go to file…';
+    const list = el('div', 'editor-palette-list');
+    panel.appendChild(input); panel.appendChild(list);
+    const files = await ensureFileList();
+    let selected = 0, rows = [];
+    function choose(f){ closeOverlay(); openFile(f); }
+    function updateSel(){ rows.forEach((r, i) => r.classList.toggle('selected', i === selected)); if (rows[selected]) rows[selected].scrollIntoView({ block: 'nearest' }); }
+    function render(){
+      const q = input.value.trim();
+      let items = !q ? files.slice(0, 50)
+        : files.map(f => ({ f, s: fuzzyScore(q, f) })).filter(x => x.s >= 0).sort((a, b) => b.s - a.s).slice(0, 50).map(x => x.f);
+      list.innerHTML = ''; rows = [];
+      items.forEach((f, idx) => {
+        const row = el('div', 'editor-palette-row', f);
+        row.dataset.path = f;
+        row.addEventListener('mousedown', (e) => { e.preventDefault(); choose(f); });
+        list.appendChild(row); rows.push(row);
+      });
+      if (selected >= rows.length) selected = Math.max(0, rows.length - 1);
+      updateSel();
+    }
+    input.addEventListener('input', () => { selected = 0; render(); });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); closeOverlay(); }
+      else if (e.key === 'ArrowDown') { e.preventDefault(); selected = Math.min(rows.length - 1, selected + 1); updateSel(); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); selected = Math.max(0, selected - 1); updateSel(); }
+      else if (e.key === 'Enter') { e.preventDefault(); if (rows[selected]) choose(rows[selected].dataset.path); }
+    });
+    render(); input.focus();
+  }
+  window.__editorQuickOpen = openQuickOpen;  // exposed for tests
+
+  async function runFileSearch(query, list){
+    list.innerHTML = '';
+    const q = (query || '').trim();
+    if (!q) return;
+    const res = await fileOp('search', null, null, q);
+    if (!res || !res.ok) { list.appendChild(el('div', 'editor-palette-empty', 'search failed')); return; }
+    if (!res.matches.length) { list.appendChild(el('div', 'editor-palette-empty', 'No matches')); return; }
+    let curFile = null;
+    for (const m of res.matches) {
+      if (m.path !== curFile) { curFile = m.path; list.appendChild(el('div', 'editor-search-file', m.path)); }
+      const row = el('div', 'editor-search-match');
+      row.appendChild(el('span', 'editor-search-line', String(m.line)));
+      row.appendChild(el('span', 'editor-search-text', m.text));
+      row.dataset.path = m.path; row.dataset.line = String(m.line);
+      row.addEventListener('mousedown', (e) => { e.preventDefault(); closeOverlay(); openFile(m.path, { line: m.line }); });
+      list.appendChild(row);
+    }
+    if (res.truncated) list.appendChild(el('div', 'editor-palette-empty', '(results truncated)'));
+  }
+
+  function openSearch(){
+    const panel = buildOverlay('editor-search'); panel.classList.add('editor-search-panel');
+    const input = el('input', 'editor-palette-input'); input.type = 'text'; input.placeholder = 'Search in files…';
+    const list = el('div', 'editor-palette-list editor-search-list');
+    panel.appendChild(input); panel.appendChild(list);
+    let timer = null;
+    input.addEventListener('input', () => { if (timer) clearTimeout(timer); timer = setTimeout(() => runFileSearch(input.value, list), 180); });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); closeOverlay(); }
+      else if (e.key === 'Enter') { e.preventDefault(); if (timer) clearTimeout(timer); runFileSearch(input.value, list); }
+    });
+    input.focus();
+  }
+  window.__editorSearch = openSearch;       // exposed for tests
+  window.__editorRunSearch = runFileSearch;  // exposed for tests
+
+  // ---- boot ----
+  window.__editorBoot = function(json){
+    let info;
+    try { info = JSON.parse(json); } catch(e) { info = {}; }
+    ROOT = info.root || '';
+    COMMENTS = info.comments === true;
+    const rn = document.getElementById('editor-root-name');
+    if (rn) rn.textContent = ROOT || '/';
+    renderTree().then(() => { if (info.initialFile) openFile(info.initialFile); });
+  };
+
+  // Global Cmd/Ctrl+S to save; Cmd/Ctrl+Enter to submit (comments mode);
+  // Cmd/Ctrl+P quick-open; Cmd/Ctrl+Shift+F content search.
+  document.addEventListener('keydown', (e) => {
+    // When a palette/search overlay input is focused, it owns its own keys
+    // (Esc/arrows/Enter) — don't let the global shortcuts re-fire (e.g. ⌘P
+    // typed into the quick-open input shouldn't toggle the palette).
+    if (e.target && e.target.closest && e.target.closest('.editor-overlay')) return;
+    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && (e.key === 'p' || e.key === 'P')) {
+      e.preventDefault();
+      openQuickOpen();
+      return;
+    }
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'f' || e.key === 'F')) {
+      e.preventDefault();
+      openSearch();
+      return;
+    }
+    if ((e.metaKey || e.ctrlKey) && (e.key === 's' || e.key === 'S')) {
+      e.preventDefault();
+      saveCurrent();
+    }
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && COMMENTS) {
+      // Let an open comment composer handle its own Cmd+Enter (save comment).
+      if (document.activeElement && document.activeElement.classList.contains('editor-comment-body')) return;
+      e.preventDefault();
+      submitToClaude();
+    }
+  });
+})();
+"""#
+
+
 // MARK: - Main
 
 guard let config = parseArgs() else {
@@ -1930,7 +3087,7 @@ func makeAppIcon() -> NSImage {
 }
 
 let app = NSApplication.shared
-app.setActivationPolicy(.accessory)
+app.setActivationPolicy(config.editorMode || config.folderMode ? .regular : .accessory)
 app.applicationIconImage = makeAppIcon()
 
 let coordinator = AppCoordinator(config: config)

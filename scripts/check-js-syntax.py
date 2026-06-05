@@ -49,6 +49,8 @@ def main() -> int:
         ("a2uiRendererJS",      extract_plain(content, "a2uiRendererJS")),
         ("markdownRendererJS",  extract_raw(content,   "markdownRendererJS")),
         ("micromarkJS",         extract_raw(content,   "micromarkJS")),
+        ("editorJS",            extract_raw(content,   "editorJS")),
+        ("highlightJS",         extract_raw(content,   "highlightJS")),
     ]
 
     ok = True
