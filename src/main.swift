@@ -1871,8 +1871,67 @@ guard let config = parseArgs() else {
     exit(3)
 }
 
+func makeAppIcon() -> NSImage {
+    let size: CGFloat = 256
+    let img = NSImage(size: NSSize(width: size, height: size))
+    img.lockFocus()
+    guard let ctx = NSGraphicsContext.current?.cgContext else {
+        img.unlockFocus()
+        return img
+    }
+
+    // Folder body
+    let folderColor = NSColor(red: 0.35, green: 0.60, blue: 1.0, alpha: 1.0)
+    let folderDark = NSColor(red: 0.25, green: 0.45, blue: 0.85, alpha: 1.0)
+
+    // Tab
+    ctx.setFillColor(folderColor.cgColor)
+    let tab = CGMutablePath()
+    tab.move(to: CGPoint(x: 24, y: 200))
+    tab.addLine(to: CGPoint(x: 24, y: 218))
+    tab.addQuadCurve(to: CGPoint(x: 36, y: 228), control: CGPoint(x: 24, y: 228))
+    tab.addLine(to: CGPoint(x: 100, y: 228))
+    tab.addLine(to: CGPoint(x: 116, y: 210))
+    tab.addLine(to: CGPoint(x: 24, y: 210))
+    tab.closeSubpath()
+    ctx.addPath(tab)
+    ctx.fillPath()
+
+    // Body
+    let body = CGRect(x: 24, y: 56, width: 208, height: 160)
+    let bodyPath = CGPath(roundedRect: body, cornerWidth: 14, cornerHeight: 14, transform: nil)
+    ctx.setFillColor(folderColor.cgColor)
+    ctx.addPath(bodyPath)
+    ctx.fillPath()
+
+    // Inner shade
+    let inner = CGRect(x: 24, y: 56, width: 208, height: 120)
+    let innerPath = CGPath(roundedRect: inner, cornerWidth: 14, cornerHeight: 14, transform: nil)
+    ctx.setFillColor(folderDark.cgColor)
+    ctx.addPath(innerPath)
+    ctx.fillPath()
+
+    // Eye/lens — a circle with a small handle
+    ctx.setStrokeColor(NSColor.white.cgColor)
+    ctx.setLineWidth(10)
+    ctx.strokeEllipse(in: CGRect(x: 84, y: 98, width: 72, height: 72))
+    ctx.setLineWidth(10)
+    ctx.setLineCap(.round)
+    ctx.move(to: CGPoint(x: 146, y: 108))
+    ctx.addLine(to: CGPoint(x: 170, y: 82))
+    ctx.strokePath()
+
+    // Small dot highlight on lens
+    ctx.setFillColor(NSColor.white.withAlphaComponent(0.5).cgColor)
+    ctx.fillEllipse(in: CGRect(x: 100, y: 146, width: 14, height: 14))
+
+    img.unlockFocus()
+    return img
+}
+
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
+app.applicationIconImage = makeAppIcon()
 
 let coordinator = AppCoordinator(config: config)
 let delegate = AppDelegate(coordinator: coordinator)
