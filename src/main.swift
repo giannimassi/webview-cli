@@ -645,8 +645,7 @@ class AppCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NS
         let fileName = (path as NSString).lastPathComponent
         window.title = fileName
 
-        let escapedContent = escapeJSString(content)
-        let escapedParent = escapeJSString(parentDir)
+        let b64Content = Data(content.utf8).base64EncodedString()
         let escapedFileName = escapeHTML(fileName)
         let escapedFolderName = escapeHTML((parentDir as NSString).lastPathComponent)
 
@@ -673,17 +672,18 @@ class AppCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NS
         </style>
         </head>
         <body>
-        <div class="back-bar">
-          <button class="back-btn" onclick="nav('\(escapedParent)')">‹ \(escapedFolderName)</button>
+        <div class="back-bar" data-path="\(escapeHTML(parentDir))">
+          <button class="back-btn">‹ \(escapedFolderName)</button>
           <span class="file-title">\(escapedFileName)</span>
         </div>
         <div class="md-content" id="md-root"></div>
         <script src="agent://host/micromark.js"></script>
         <script src="agent://host/markdown-renderer.js"></script>
         <script>
-        function nav(p) { window.webkit.messageHandlers.navigate.postMessage({path: p}); }
-        var md = "\(escapedContent)";
-        window.renderMarkdown(md, document.getElementById('md-root'), {allowHtml: false});
+        function nav(p){window.webkit.messageHandlers.navigate.postMessage({path:p});}
+        document.querySelector('.back-bar').addEventListener('click',function(){nav(this.dataset.path);});
+        var md=new TextDecoder('utf-8').decode(Uint8Array.from(atob('\(b64Content)'),function(c){return c.charCodeAt(0);}));
+        window.renderMarkdown(md,document.getElementById('md-root'),{allowHtml:false});
         </script>
         </body>
         </html>
@@ -724,7 +724,7 @@ class AppCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NS
         var rows = ""
         if path != "/" {
             let parent = (path as NSString).deletingLastPathComponent
-            rows += "<div class=\"item\" onclick=\"nav('\(escapeJSString(parent))')\">"
+            rows += "<div class=\"item\" data-path=\"\(escapeHTML(parent))\">"
             rows += "<span class=\"icon\">📁</span>"
             rows += "<span class=\"name dir\">..</span>"
             rows += "<span class=\"meta\"></span>"
@@ -747,7 +747,7 @@ class AppCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NS
                 if let mod = entry.modified { parts.append(dateFmt.string(from: mod)) }
                 meta = parts.joined(separator: " · ")
             }
-            rows += "<div class=\"item\" onclick=\"nav('\(escapeJSString(fullPath))')\">"
+            rows += "<div class=\"item\" data-path=\"\(escapeHTML(fullPath))\">"
             rows += "<span class=\"icon\">\(icon)</span>"
             rows += "<span class=\"\(nameClass)\">\(escapeHTML(entry.name))</span>"
             rows += "<span class=\"meta\">\(escapeHTML(meta))</span>"
@@ -802,7 +802,10 @@ class AppCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NS
         <body>
         <div class="header"><div class="breadcrumb">\(breadcrumb)</div></div>
         <div class="listing">\(rows)</div>
-        <script>function nav(p){window.webkit.messageHandlers.navigate.postMessage({path:p});}</script>
+        <script>
+        function nav(p){window.webkit.messageHandlers.navigate.postMessage({path:p});}
+        document.addEventListener('click',function(e){var t=e.target.closest('[data-path]');if(t)nav(t.dataset.path);});
+        </script>
         </body>
         </html>
         """
@@ -810,7 +813,7 @@ class AppCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NS
 
     func generateBreadcrumb(for path: String) -> String {
         let components = path.split(separator: "/", omittingEmptySubsequences: true)
-        var html = "<a onclick=\"nav('/')\">/</a>"
+        var html = "<a data-path=\"/\">/</a>"
         var current = ""
         for (i, comp) in components.enumerated() {
             current += "/\(comp)"
@@ -818,7 +821,7 @@ class AppCoordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NS
             if i == components.count - 1 {
                 html += "<span class=\"current\">\(escapeHTML(String(comp)))</span>"
             } else {
-                html += "<a onclick=\"nav('\(escapeJSString(current))')\">\(escapeHTML(String(comp)))</a>"
+                html += "<a data-path=\"\(escapeHTML(current))\">\(escapeHTML(String(comp)))</a>"
             }
         }
         return html
