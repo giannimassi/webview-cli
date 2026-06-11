@@ -4,6 +4,10 @@ All notable changes to webview-cli. Format follows [Keep a Changelog](https://ke
 
 ## [Unreleased]
 
+### Changed
+
+- **Binary size budget: 420KB → 500KB** (CI gate). The `--editor` runtime + folder browser pushed the binary to ~450KB; the old 420KB gate had been failing since those merges. README size claims updated from ~290KB to ~450KB — still ~100× smaller than an Electron equivalent.
+
 ### Added
 
 - **`--editor <path>` mode** — turns webview-cli into a small native text editor over a directory (or a single file's parent dir):
