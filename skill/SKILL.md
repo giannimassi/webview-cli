@@ -229,8 +229,9 @@ For anything beyond trivial substitution, **write the JSONL in a Python generato
    - 120s — simple approval (user is present)
    - 300s — multi-field form (user composes input)
    - 600s — content review or complex decisions
-   - **Never >540s** — Bash tool caps total time at 600s.
-5. **Set the Bash tool timeout deterministically**: `bash_timeout_ms = (webview_timeout_sec + 30) × 1000`. The +30s buffer covers WKWebView startup, process teardown, and OS scheduling variance.
+   - **Never >540s in a foreground Bash call** — Bash tool caps total time at 600s.
+   - **Long-form review flows (many items, free-text comments, unbounded reading time): never run webview-cli in the foreground.** The Bash tool's 600s cap forces a ≤540s timeout, and on timeout ALL in-progress user input is destroyed. Run it as a background command (e.g. Claude Code's `run_in_background: true`) with a multi-hour `--timeout` (e.g. 43200), redirecting stdout to a file — the completion notification delivers the JSON when the user actually submits. Foreground + ≤540s is only acceptable for quick approvals/forms (<2 min of user effort at stake).
+5. **Set the Bash tool timeout deterministically** (foreground runs only): `bash_timeout_ms = (webview_timeout_sec + 30) × 1000`. The +30s buffer covers WKWebView startup, process teardown, and OS scheduling variance.
 6. **Generate the JSONL**:
    - ≤5 static components + no user data: heredoc or inline string is fine
    - Anything dynamic (user names, lists, long text, content with quotes): write a Python generator to `/tmp/<name>-gen.py`, run it to produce `/tmp/<name>.jsonl`, then pipe that file
